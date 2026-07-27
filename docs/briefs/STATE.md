@@ -1,7 +1,7 @@
 # Milestone State
 <!-- Single source of truth for autonomous progression. Update ONLY via /next or
      /milestone-done. Format: one line per milestone: id | status | note -->
-M0 | pending |
+M0 | in-progress |
 M1 | pending |
 M2 | pending |
 M3 | pending |
