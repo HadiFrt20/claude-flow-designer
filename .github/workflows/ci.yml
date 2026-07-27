@@ -1,0 +1,27 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm }
+      - run: sudo apt-get update && sudo apt-get install -y shellcheck jq
+      - run: npm ci
+      - name: Lint & typecheck
+        run: npm run lint && npm run typecheck
+      - name: Tests (includes validation-matrix + codegen snapshots + round-trip)
+        run: npm run test
+      - name: Regenerate template gallery & lint generated assets
+        run: |
+          npm run -s fixtures:regen || echo "fixtures target lands in M1"
+          find fixtures -name '*.sh' -print0 2>/dev/null | xargs -0 -r shellcheck
+          find fixtures -name 'settings.json' -print0 2>/dev/null | xargs -0 -r -n1 jq empty
+          git diff --exit-code fixtures || (echo "::error::Codegen drift: commit regenerated fixtures" && exit 1)
+      - name: Validate committed graphs
+        run: |
+          find . -name '*.clauflow.json' -not -path './node_modules/*' -print0 \
+            | xargs -0 -r -n1 node packages/core/dist/cli.js validate || echo "cli lands in M1"
+      - name: Extension package dry-run
+        run: npm run -s package:vscode -- --no-git-tag-version || echo "vsce dry-run lands in M4"

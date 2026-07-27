@@ -1,0 +1,8 @@
+{
+  "name": "@clauflow/core",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": { "build": "tsc -p tsconfig.json", "test": "vitest run" },
+  "dependencies": { "zod": "^3.23.0", "js-yaml": "^4.1.0", "gray-matter": "^4.0.3" }
+}

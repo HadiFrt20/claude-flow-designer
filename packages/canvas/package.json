@@ -1,0 +1,13 @@
+{
+  "name": "@clauflow/canvas",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": { "build": "tsc -p tsconfig.json" },
+  "dependencies": {
+    "@clauflow/core": "*",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "@xyflow/react": "^12.3.0"
+  }
+}

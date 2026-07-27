@@ -1,0 +1,23 @@
+{
+  "name": "claude-flow-designer",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @clauflow/core -w @clauflow/canvas -w @clauflow/web -w clauflow-vscode",
+    "test": "vitest run",
+    "dev:web": "npm run dev -w @clauflow/web",
+    "dev:vscode": "npm run watch -w clauflow-vscode",
+    "package:vscode": "npm run package -w clauflow-vscode",
+    "lint": "eslint packages --ext .ts,.tsx",
+    "gate": "npm run -s typecheck && npm run -s test",
+    "typecheck": "tsc -b packages/core packages/canvas packages/vscode --noEmit || tsc --noEmit -p packages/core"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0",
+    "eslint": "^9.0.0"
+  }
+}
