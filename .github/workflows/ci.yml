@@ -11,14 +11,22 @@ jobs:
       - run: npm ci
       - name: Lint & typecheck
         run: npm run lint && npm run typecheck
+      - name: Build (all packages; emits dist/cli.js)
+        run: npm run build
       - name: Tests (includes validation-matrix + codegen snapshots + round-trip)
         run: npm run test
       - name: Regenerate template gallery & lint generated assets
         run: |
-          npm run -s fixtures:regen || echo "fixtures target lands in M1"
-          find fixtures -name '*.sh' -print0 2>/dev/null | xargs -0 -r shellcheck
-          find fixtures -name 'settings.json' -print0 2>/dev/null | xargs -0 -r -n1 jq empty
-          git diff --exit-code fixtures || (echo "::error::Codegen drift: commit regenerated fixtures" && exit 1)
+          # The template gallery + fixtures land in M1. Until fixtures/ exists this
+          # step is a no-op; once it does, regenerate, lint, and fail on drift.
+          if [ -d fixtures ]; then
+            npm run -s fixtures:regen || echo "fixtures target lands in M1"
+            find fixtures -name '*.sh' -print0 | xargs -0 -r shellcheck
+            find fixtures -name 'settings.json' -print0 | xargs -0 -r -n1 jq empty
+            git diff --exit-code -- fixtures || { echo "::error::Codegen drift: commit regenerated fixtures"; exit 1; }
+          else
+            echo "no fixtures/ yet (M1); skipping gallery lint"
+          fi
       - name: Validate committed graphs
         run: |
           find . -name '*.clauflow.json' -not -path './node_modules/*' -print0 \
