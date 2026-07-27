@@ -291,16 +291,18 @@ export const fixtures: Record<RuleId, { hit: WorkflowGraph; miss: WorkflowGraph 
     ),
   },
   CF115: {
+    // hit: a full script (shebang) pasted as scriptBody — bypasses codegen wrapping.
     hit: g(
       [n.hookEvent('t1', { event: 'PreToolUse', scope: 'project', matcher: 'Bash' }),
        n.command('h1', { command: 'bash', scriptBody: '#!/bin/bash\necho hi\n' })],
       [e('t1', 'h1')],
     ),
+    // miss: inner logic only — codegen adds the shebang + jq guard + stdin read.
     miss: g(
       [n.hookEvent('t1', { event: 'PreToolUse', scope: 'project', matcher: 'Bash' }),
        n.command('h1', {
          command: 'bash',
-         scriptBody: 'command -v jq >/dev/null || exit 1\ninput=$(cat)\necho "$input"\n',
+         scriptBody: 'tool=$(jq -r .tool_input.command <<<"$input")\necho "$tool"',
        })],
       [e('t1', 'h1')],
     ),

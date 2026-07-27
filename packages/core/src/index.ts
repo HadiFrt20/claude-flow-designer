@@ -4,5 +4,6 @@ export * from './schema/graph.js';
 export * from './schema/graph-utils.js';
 export * from './diagnostics.js';
 export * from './validate.js';
-// export { generate } from './codegen/index.js';   // M1 (must call exportGate first)
-// export { parseProject } from './importer.js';     // M1
+export { generate, ExportGateError, SelfLintError } from './codegen/index.js';
+export type { GenerateOptions } from './codegen/index.js';
+export { parseProject } from './importer.js';

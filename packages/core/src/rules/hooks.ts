@@ -442,9 +442,11 @@ const cf114: Rule = {
 };
 
 // CF115 — generated script missing jq guard or stdin read (codegen invariant).
-// At the graph level we can only assert the *intent*: a hook.command that has a
-// scriptBody must contain a jq guard + stdin read. Codegen inserts these
-// automatically, so a hand-authored scriptBody lacking them is the failure mode.
+// CF115 — a hook.command `scriptBody` is INNER LOGIC; codegen owns the wrapper
+// (shebang + `set -euo pipefail` + jq guard + `input=$(cat)` + decision tail), so
+// the generated script always satisfies the jq-guard/stdin invariant (asserted by
+// codegen self-lint). The graph-level failure mode is an author pasting a *full*
+// script (leading shebang) that bypasses the wrapper and may lack the guard.
 const cf115: Rule = {
   id: 'CF115',
   severity: 'error',
@@ -453,26 +455,32 @@ const cf115: Rule = {
     for (const h of nodesOfKind(graph, 'hook.command')) {
       const body = h.data.scriptBody;
       if (body === undefined) continue;
-      const hasJqGuard = /command -v jq/.test(body);
-      const readsStdin = /\bcat\b|<<</.test(body) || /\$\(cat\)/.test(body);
-      if (!hasJqGuard || !readsStdin) {
+      if (/^\s*#!/.test(body)) {
         diags.push({
           ruleId: 'CF115',
           severity: 'error',
           nodeId: h.id,
           field: 'scriptBody',
           message:
-            'Generated script must include a jq availability guard and read stdin once. Regenerate the script body.',
+            'scriptBody must be inner logic, not a full script — codegen adds the shebang, jq guard, and stdin read. Remove the shebang/header so it can be regenerated safely.',
           docsUrl: DOCS_URLS.hooks,
           quickFix: {
-            title: 'Insert jq guard + stdin read',
+            title: 'Strip the shebang/header (keep inner logic)',
             apply: (g: WorkflowGraph) =>
               mapNode(g, h.id, (node) => {
                 if (node.kind !== 'hook.command') return node;
-                const guard =
-                  'command -v jq >/dev/null || { echo "jq required" >&2; exit 1; }\ninput=$(cat)\n';
-                const existing = node.data.scriptBody ?? '';
-                return { ...node, data: { ...node.data, scriptBody: guard + existing } };
+                const stripped = (node.data.scriptBody ?? '')
+                  .split('\n')
+                  .filter(
+                    (line) =>
+                      !/^\s*#!/.test(line) &&
+                      !/^\s*set -euo pipefail\s*$/.test(line) &&
+                      !/command -v jq >\/dev\/null/.test(line) &&
+                      !/^\s*input=\$\(cat\)\s*$/.test(line),
+                  )
+                  .join('\n')
+                  .replace(/^\n+/, '');
+                return { ...node, data: { ...node.data, scriptBody: stripped } };
               }),
           },
         });

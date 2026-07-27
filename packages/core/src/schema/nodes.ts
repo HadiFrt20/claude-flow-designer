@@ -47,6 +47,8 @@ export const slashCommandDataSchema = z.object({
   agent: z.string().optional(), // subagent name this command delegates to
   model: z.string().optional(),
   effort: effortSchema.optional(),
+  // Unknown frontmatter keys preserved on import, re-emitted verbatim.
+  extra: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const hookEventDataSchema = z.object({
@@ -95,6 +97,8 @@ export const subagentStepDataSchema = z.object({
   // Hook events declared in the agent's own frontmatter (see REFERENCE: Stop
   // auto-converts to SubagentStop). Modeled to drive CF303.
   frontmatterHooks: z.array(hookEventSchema).optional(),
+  // Unknown frontmatter keys preserved on import, re-emitted verbatim.
+  extra: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const mcpToolStepDataSchema = z.object({
