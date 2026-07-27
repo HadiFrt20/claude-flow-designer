@@ -40,13 +40,22 @@ function lintFrontmatter(file: GeneratedFile): void {
 function lintScript(file: GeneratedFile): void {
   const c = file.content;
   if (!c.startsWith('#!/bin/bash')) throw new SelfLintError('missing #!/bin/bash shebang', file.path);
-  // CF115 invariant: jq guard + stdin read present.
-  if (!/command -v jq >\/dev\/null/.test(c)) {
-    throw new SelfLintError('missing jq availability guard', file.path);
-  }
-  if (!/input=\$\(cat\)/.test(c)) throw new SelfLintError('missing stdin read (input=$(cat))', file.path);
   if (!c.endsWith('\n')) throw new SelfLintError('missing trailing newline', file.path);
-  if (!file.executable) throw new SelfLintError('hook script not marked executable', file.path);
+  if (!file.executable) throw new SelfLintError('script not marked executable', file.path);
+
+  // The jq-guard + stdin-read invariant applies only to generated HOOK scripts
+  // (…/hooks/*.sh, in both .claude/ and plugin-bundle layouts), which receive the
+  // hook payload on stdin. The headless runner (run.sh) is not a hook and
+  // legitimately has neither (CF115 scope).
+  const isHookScript = /\/hooks\/[^/]+\.sh$/.test(file.path);
+  if (isHookScript) {
+    if (!/command -v jq >\/dev\/null/.test(c)) {
+      throw new SelfLintError('hook script missing jq availability guard', file.path);
+    }
+    if (!/input=\$\(cat\)/.test(c)) {
+      throw new SelfLintError('hook script missing stdin read (input=$(cat))', file.path);
+    }
+  }
 }
 
 /** Lint every generated file by type. Throws SelfLintError on the first problem. */

@@ -13,7 +13,8 @@
     "package:vscode": "npm run package -w clauflow-vscode",
     "lint": "eslint packages",
     "gate": "npm run -s typecheck && npm run -s test",
-    "typecheck": "tsc -b packages/core packages/canvas packages/vscode"
+    "typecheck": "tsc -b packages/core packages/canvas packages/vscode",
+    "fixtures:regen": "npm run -s build -w @clauflow/core && node packages/core/scripts/regen-fixtures.mjs"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",

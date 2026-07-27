@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "meta": {
+    "name": "PR Review",
+    "slug": "pr-review",
+    "description": "Review the current diff for issues"
+  },
+  "settings": {
+    "model": "sonnet",
+    "permissions": {
+      "allow": [
+        "Bash(git diff *)",
+        "Bash(git log *)"
+      ],
+      "deny": [],
+      "ask": []
+    }
+  },
+  "nodes": [
+    {
+      "id": "cmd",
+      "kind": "trigger.slashCommand",
+      "label": "pr-review",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "name": "pr-review",
+        "description": "Review the staged/committed diff and report issues by severity.",
+        "args": [
+          {
+            "name": "base",
+            "placeholder": "$1"
+          }
+        ],
+        "argumentHint": "[base-branch]"
+      }
+    },
+    {
+      "id": "diff",
+      "kind": "step.shell",
+      "label": "diff",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "command": "git diff $1...HEAD",
+        "embedOutput": true
+      }
+    },
+    {
+      "id": "ask",
+      "kind": "step.prompt",
+      "label": "review",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "body": "Review the diff above against $1. List findings grouped by severity (blocker/major/minor), each with file:line and a concrete fix."
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "cmd",
+      "target": "diff"
+    },
+    {
+      "id": "e2",
+      "source": "diff",
+      "target": "ask"
+    }
+  ]
+}

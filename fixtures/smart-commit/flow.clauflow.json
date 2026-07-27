@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "meta": {
+    "name": "Smart Commit",
+    "slug": "smart-commit",
+    "description": "Draft a conventional commit from staged changes"
+  },
+  "settings": {
+    "permissions": {
+      "allow": [
+        "Bash(git status *)",
+        "Bash(git diff *)"
+      ],
+      "deny": [],
+      "ask": []
+    }
+  },
+  "nodes": [
+    {
+      "id": "cmd",
+      "kind": "trigger.slashCommand",
+      "label": "smart-commit",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "name": "smart-commit",
+        "description": "Summarize staged changes and propose a conventional-commit message."
+      }
+    },
+    {
+      "id": "status",
+      "kind": "step.shell",
+      "label": "status",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "command": "git status --short",
+        "embedOutput": true
+      }
+    },
+    {
+      "id": "staged",
+      "kind": "step.shell",
+      "label": "staged diff",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "command": "git diff --cached",
+        "embedOutput": true
+      }
+    },
+    {
+      "id": "draft",
+      "kind": "step.prompt",
+      "label": "draft",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "body": "From the staged changes above, propose ONE conventional-commit message (type(scope): subject) plus a short body. Do not run git commit."
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "cmd",
+      "target": "status"
+    },
+    {
+      "id": "e2",
+      "source": "status",
+      "target": "staged"
+    },
+    {
+      "id": "e3",
+      "source": "staged",
+      "target": "draft"
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "meta": {
+    "name": "Session Context Loader",
+    "slug": "session-context-loader",
+    "description": "Inject repo status into context at session start"
+  },
+  "settings": {},
+  "nodes": [
+    {
+      "id": "trg",
+      "kind": "trigger.sessionStart",
+      "label": "on start",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "matcher": "startup"
+      }
+    },
+    {
+      "id": "load",
+      "kind": "hook.command",
+      "label": "load context",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "command": "bash",
+        "scriptBody": "ctx=$(git -C \"$CLAUDE_PROJECT_DIR\" status --short 2>/dev/null || echo \"no git\")\nprintf '%s' \"$ctx\" > /tmp/clauflow-ctx.txt"
+      }
+    },
+    {
+      "id": "note",
+      "kind": "output.decision",
+      "label": "add context",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "mode": "allow",
+        "additionalContext": "Repo status loaded at session start."
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "trg",
+      "target": "load"
+    },
+    {
+      "id": "e2",
+      "source": "load",
+      "target": "note"
+    }
+  ]
+}

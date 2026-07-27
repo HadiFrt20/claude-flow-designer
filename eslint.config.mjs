@@ -1,4 +1,5 @@
 import js from '@eslint/js';
+import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
@@ -7,6 +8,11 @@ export default tseslint.config(
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
+  {
+    // Node scripts (build/codegen tooling) run under Node — expose its globals.
+    files: ['**/*.mjs', '**/scripts/**/*.{js,mjs}'],
+    languageOptions: { globals: globals.node },
+  },
   {
     files: ['packages/**/*.{ts,tsx}'],
     rules: {
