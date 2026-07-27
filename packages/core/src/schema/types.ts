@@ -25,3 +25,19 @@ export interface GeneratedFile {
   content: string;
   executable?: boolean;    // chmod +x for hook scripts
 }
+
+/** Stable diagnostic identifiers — documented in docs/SPEC-VALIDATION.md, never renumber. */
+export type RuleId =
+  // graph structure
+  | 'CF001' | 'CF002' | 'CF003' | 'CF004' | 'CF005' | 'CF006' | 'CF007' | 'CF008'
+  // hooks
+  | 'CF101' | 'CF102' | 'CF103' | 'CF104' | 'CF105' | 'CF106' | 'CF107' | 'CF108'
+  | 'CF109' | 'CF110' | 'CF111' | 'CF112' | 'CF113' | 'CF114' | 'CF115'
+  // skills / commands
+  | 'CF201' | 'CF202' | 'CF203' | 'CF204' | 'CF205' | 'CF206' | 'CF207'
+  // subagents
+  | 'CF301' | 'CF302' | 'CF303'
+  // settings / model / effort
+  | 'CF401' | 'CF402' | 'CF403' | 'CF404' | 'CF405' | 'CF406' | 'CF407'
+  // headless / runner
+  | 'CF501' | 'CF502' | 'CF503' | 'CF504';
