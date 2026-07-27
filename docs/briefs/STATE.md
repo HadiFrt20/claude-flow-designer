@@ -1,7 +1,7 @@
 # Milestone State
 <!-- Single source of truth for autonomous progression. Update ONLY via /next or
      /milestone-done. Format: one line per milestone: id | status | note -->
-M0 | in-progress |
+M0 | done | schema + 44 rules (CF001-CF504) w/ hit+miss fixtures & quick fixes, exportGate, clauflow CLI; matrix strict; code-reviewer APPROVE
 M1 | pending |
 M2 | pending |
 M3 | pending |

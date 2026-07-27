@@ -1,12 +1,12 @@
 # ROADMAP
 
 ## M0 — Foundation
-- [ ] Workspace bootstrap builds green (`npm run build`, `npm run test`).
-- [ ] `core`: zod schema for WorkflowGraph + all node kinds (SPEC-NODES.md).
-- [ ] `core`: validate.ts — ALL rules CF001–CF504 registered with hit+miss fixtures;
+- [x] Workspace bootstrap builds green (`npm run build`, `npm run test`).
+- [x] `core`: zod schema for WorkflowGraph + all node kinds (SPEC-NODES.md).
+- [x] `core`: validate.ts — ALL rules CF001–CF504 registered with hit+miss fixtures;
       validation-matrix test flipped to strict doc<->code equality.
-- [ ] Export gate (`exportGate`) wired and tested (errors block; warnings need ack).
-- [ ] Review pipeline live: /review-pr + code-reviewer subagent + Stop gate hook verified
+- [x] Export gate (`exportGate`) wired and tested (errors block; warnings need ack).
+- [x] Review pipeline live: /review-pr + code-reviewer subagent + Stop gate hook verified
       end-to-end on a sample change.
 
 ## M1 — Codegen (headless-complete before any UI)
