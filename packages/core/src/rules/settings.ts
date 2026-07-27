@@ -53,6 +53,13 @@ const cf402: Rule = {
           field: 'effort',
           message: `Haiku + "${effort}" effort is a wasteful pairing; pick a larger model or lower effort.`,
           docsUrl: DOCS_URLS.modelConfig,
+          quickFix: {
+            title: 'Lower effort to high',
+            apply: (g: WorkflowGraph) =>
+              patchSettings(g, (s) => {
+                s.effort = 'high';
+              }),
+          },
         },
       ];
     }
@@ -168,6 +175,22 @@ const cf406: Rule = {
   },
 };
 
+// Rename an env var key, preserving its value and insertion order. Sanitizes
+// invalid chars and strips a reserved prefix; on collision, appends _1.
+function renameEnvKey(graph: WorkflowGraph, from: string): WorkflowGraph {
+  const next = structuredClone(graph);
+  const env = next.settings.env;
+  if (!env || !(from in env)) return next;
+  let to = from.replace(/^(OTEL|CLAUDE)_/, '').replace(/[^A-Za-z0-9_]/g, '_');
+  if (!/^[A-Za-z_]/.test(to)) to = `_${to}`;
+  if (to === '') to = 'RENAMED';
+  while (to in env && to !== from) to = `${to}_1`;
+  next.settings.env = Object.fromEntries(
+    Object.entries(env).map(([k, v]) => (k === from ? [to, v] : [k, v])),
+  );
+  return next;
+}
+
 // CF407 — env var name invalid / reserved.
 const cf407: Rule = {
   id: 'CF407',
@@ -176,6 +199,10 @@ const cf407: Rule = {
     const env = graph.settings.env;
     if (!env) return [];
     const diags: Diagnostic[] = [];
+    const renameFix = (name: string) => ({
+      title: `Rename "${name}"`,
+      apply: (g: WorkflowGraph) => renameEnvKey(g, name),
+    });
     for (const name of Object.keys(env)) {
       if (!VALID_ENV_NAME.test(name)) {
         diags.push({
@@ -184,6 +211,7 @@ const cf407: Rule = {
           field: 'env',
           message: `Invalid env var name "${name}".`,
           docsUrl: DOCS_URLS.settings,
+          quickFix: renameFix(name),
         });
       } else if (/^OTEL_/.test(name)) {
         diags.push({
@@ -192,6 +220,7 @@ const cf407: Rule = {
           field: 'env',
           message: `env var "${name}" is stripped from subprocesses (OTEL_* reserved); rename it.`,
           docsUrl: DOCS_URLS.settings,
+          quickFix: renameFix(name),
         });
       } else if (/^CLAUDE_/.test(name)) {
         diags.push({
@@ -200,6 +229,7 @@ const cf407: Rule = {
           field: 'env',
           message: `env var "${name}" uses the reserved CLAUDE_ prefix; may collide with Claude Code internals.`,
           docsUrl: DOCS_URLS.settings,
+          quickFix: renameFix(name),
         });
       }
     }

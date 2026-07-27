@@ -57,7 +57,7 @@ review blocker (see SPEC-REVIEW.md).
 | CF107 | warn | `once: true` outside skill frontmatter (ignored there) | remove |
 | CF108 | warn | UserPromptSubmit handler with timeout > 30s default (stalls every prompt) | lower timeout |
 | CF109 | warn | MessageDisplay handler with timeout > 10s | lower timeout |
-| CF110 | error | `hook.agent` used — experimental; require explicit ack | — |
+| CF110 | warn | `hook.agent` used — experimental; require explicit ack (warn so the export gate lets the user ack it, like CF404) | — |
 | CF111 | error | SessionStart/Setup handler of type `http`/`prompt`/`agent` (only command & mcp_tool supported) | change type |
 | CF112 | warn | mcp_tool hook on SessionStart/Setup (server likely not connected yet) | — |
 | CF113 | error | PermissionDenied hook using exit 2 (ignored) instead of JSON `retry` | convert |
@@ -76,16 +76,16 @@ review blocker (see SPEC-REVIEW.md).
 | CF207 | error | `@file` reference to path that is graph-declared as generated output (ordering hazard) | — |
 
 ### Subagents (CF3xx)
-| ID | Sev | Rule |
-|---|---|---|
-| CF301 | error | Subagent `tools` includes a tool not in the workflow's allow set |
-| CF302 | warn | Subagent without description (Claude can't auto-delegate) |
-| CF303 | warn | `Stop` hook in agent frontmatter (auto-converted to SubagentStop — inform) |
+| ID | Sev | Rule | Quick fix |
+|---|---|---|---|
+| CF301 | error | Subagent `tools` includes a tool not in the workflow's allow set | — |
+| CF302 | warn | Subagent without description (Claude can't auto-delegate) | — |
+| CF303 | warn | `Stop` hook in agent frontmatter (auto-converted to SubagentStop — inform) | — |
 
 ### Settings / model / effort (CF4xx)
 | ID | Sev | Rule | Quick fix |
 |---|---|---|---|
-| CF401 | warn | `effort: xhigh|max` targeted at settings.json (flaky; issues #30726/#45453) | move to CLI flag (codegen does this automatically; warn explains) |
+| CF401 | warn | `effort: xhigh\|max` targeted at settings.json (flaky; issues #30726/#45453) | move to CLI flag (codegen does this automatically; warn explains) |
 | CF402 | warn | Haiku + xhigh/max effort (wasteful pairing) | suggest model/effort |
 | CF403 | error | Unknown model string (not in known aliases/IDs list; list is data, easy to update) | — |
 | CF404 | warn | `bypassPermissions` mode in an exported workflow (require ack) | — |
@@ -94,12 +94,12 @@ review blocker (see SPEC-REVIEW.md).
 | CF407 | error | env var name invalid / reserved (`CLAUDE_*` warn, `OTEL_*` stripped from subprocesses) | rename |
 
 ### Headless / runner (CF5xx)
-| ID | Sev | Rule |
-|---|---|---|
-| CF501 | error | Headless trigger without prompt template |
-| CF502 | warn | `--output-format stream-json` consumed by nothing downstream |
-| CF503 | warn | `--max-turns` low for a multi-step workflow (heuristic: < steps × 2) |
-| CF504 | info | Worktree enabled — remind about WorktreeCreate hook interaction |
+| ID | Sev | Rule | Quick fix |
+|---|---|---|---|
+| CF501 | error | Headless trigger without prompt template | — |
+| CF502 | warn | `--output-format stream-json` consumed by nothing downstream | — |
+| CF503 | warn | `--max-turns` low for a multi-step workflow (heuristic: < steps × 2) | — |
+| CF504 | info | Worktree enabled — remind about WorktreeCreate hook interaction | — |
 
 ## Quick-fix framework
 

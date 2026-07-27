@@ -45,13 +45,13 @@ Every node: `{ id, kind, label, position: {x,y}, data: <per-kind> }`.
 | `step.prompt` | markdown body (supports `$ARGUMENTS`, `$0..$9`), model?, effort? |
 | `step.shell` | command, embedOutput (→ `` !`cmd` `` in skill body) or standalone script |
 | `step.fileRef` | paths[] (→ `@path` references) |
-| `step.subagent` | name, description, tools[], model?, effort?, systemPrompt (md body) → `.claude/agents/<name>.md`; edge from a command node emits delegation instructions or frontmatter `agent:` |
+| `step.subagent` | name, description, tools[], model?, effort?, systemPrompt (md body), frontmatterHooks? (hook events declared in the agent's own frontmatter — drives CF303) → `.claude/agents/<name>.md`; edge from a command node emits delegation instructions or frontmatter `agent:` |
 | `step.mcpTool` | server, tool, input (object w/ `${tool_input.*}` substitution) — hook handler `type: mcp_tool` |
 
 ### Hook handlers (attach to a trigger.hookEvent via edge)
 | kind | data |
 |---|---|
-| `hook.command` | command, args[] (exec form) or shell form, shell?: 'bash'\|'powershell', timeout?, statusMessage?, async?, asyncRewake?, once?, if? (permission-rule string) |
+| `hook.command` | command, args[] (exec form) or shell form, shell?: 'bash'\|'powershell', timeout?, statusMessage?, async?, asyncRewake?, once?, if? (permission-rule string), scriptBody? (inline script → `.claude/hooks/<file>.sh`; codegen inserts the jq guard + stdin read — CF115 asserts it) |
 | `hook.http` | url, headers, allowedEnvVars[], timeout? |
 | `hook.prompt` | prompt (uses `$ARGUMENTS` = input JSON), model? |
 | `hook.agent` | prompt, model? (experimental — surface warning badge) |
@@ -60,7 +60,7 @@ Every node: `{ id, kind, label, position: {x,y}, data: <per-kind> }`.
 | kind | data |
 |---|---|
 | `gate.condition` | matcher and/or `if` rule (e.g. `Bash(git *)`, `Edit(*.ts)`) — refines the hook it feeds |
-| `output.decision` | mode: 'allow'\|'deny'\|'ask'\|'block'\|'stopAll', reason, updatedInput?, updatedToolOutput?, additionalContext?, systemMessage?, suppressOutput? — compiled into the generated hook script's JSON stdout (exit 0) or `exit 2` path |
+| `output.decision` | mode: 'allow'\|'deny'\|'ask'\|'block'\|'stopAll', reason, updatedInput?, updatedToolOutput?, additionalContext?, systemMessage?, suppressOutput?, blockStyle?: 'json'\|'exit2'\|'exit1' (how a blocking decision is emitted — SPEC-CODEGEN "user picks style; default JSON"; 'exit1' is the CF114 misconfiguration) — compiled into the generated hook script's JSON stdout (exit 0) or `exit 2` path |
 
 ## HostBridge (canvas ↔ host contract)
 

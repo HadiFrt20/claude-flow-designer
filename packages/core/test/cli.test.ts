@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { run } from '../src/cli.js';
 import { serializeGraph } from '../src/schema/graph.js';
+import { validateGraph } from '../src/validate.js';
 import { fixtures } from './fixtures.js';
 
 let dir: string;
@@ -44,10 +45,18 @@ describe('clauflow validate', () => {
     expect(run(['validate', p])).toBe(1);
   });
 
-  it('exits 0 after the CF101 quick fix is applied', () => {
-    // The miss fixture is the CF101 hit with a blockable event — the fixed state.
-    const p = write('cf101-fixed.clauflow.json', serializeGraph(fixtures.CF101.miss));
-    expect(run(['validate', p])).toBe(0);
+  it('exits 0 after applying the CF101 quick fix to the failing graph', () => {
+    // Acceptance criterion #2: fail a CF101 graph, then pass it after applying
+    // the rule's own quick fix (not a hand-authored fixed fixture).
+    const failing = fixtures.CF101.hit;
+    const before = write('cf101.clauflow.json', serializeGraph(failing));
+    expect(run(['validate', before])).toBe(1);
+
+    const diag = validateGraph(failing).find((d) => d.ruleId === 'CF101' && d.quickFix);
+    expect(diag?.quickFix).toBeDefined();
+    const fixed = diag!.quickFix!.apply(failing);
+    const after = write('cf101-fixed.clauflow.json', serializeGraph(fixed));
+    expect(run(['validate', after])).toBe(0);
   });
 
   it('exits 0 when only warnings remain and they are acked', () => {

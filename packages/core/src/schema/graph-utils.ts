@@ -44,9 +44,11 @@ export function predecessors(graph: WorkflowGraph, nodeId: string): string[] {
 }
 
 /**
- * Walk backward from a node to the nearest `trigger.hookEvent` and return its
- * event, if any. Used by hook rules (a handler/decision is bound to whatever
- * hook-event trigger feeds it, possibly through a gate.condition).
+ * Walk backward from a node to the nearest hook-firing trigger and return the
+ * event it fires on, if any. Used by hook rules (a handler/decision is bound to
+ * whatever trigger feeds it, possibly through a gate.condition). Both
+ * `trigger.hookEvent` and the dedicated `trigger.sessionStart` node fire hooks;
+ * the latter always governs the `SessionStart` event.
  */
 export function governingHookEvent(
   graph: WorkflowGraph,
@@ -61,6 +63,7 @@ export function governingHookEvent(
     seen.add(id);
     const n = byId.get(id);
     if (n?.kind === 'trigger.hookEvent') return n.data.event;
+    if (n?.kind === 'trigger.sessionStart') return 'SessionStart';
     stack.push(...predecessors(graph, id));
   }
   return undefined;

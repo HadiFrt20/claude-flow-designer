@@ -14,7 +14,10 @@ import {
   isUnanchoredRegexMatcher,
 } from './helpers.js';
 
-// CF101 — blocking decision on a non-blockable event.
+// CF101 — blocking decision on a non-blockable event. Per SPEC-VALIDATION.md:51
+// this is scoped to block/deny/exit-2. `stopAll` compiles to {"continue":false}
+// (SPEC-CODEGEN:80), a universal field not gated by the blockability table, so it
+// is excluded. PermissionDenied is left to CF113 (its exit-2 → JSON-retry rule).
 const cf101: Rule = {
   id: 'CF101',
   severity: 'error',
@@ -22,12 +25,10 @@ const cf101: Rule = {
     const diags: Diagnostic[] = [];
     for (const dec of nodesOfKind(graph, 'output.decision')) {
       const blocks =
-        dec.data.mode === 'block' ||
-        dec.data.mode === 'deny' ||
-        dec.data.mode === 'stopAll' ||
-        dec.data.blockStyle === 'exit2';
+        dec.data.mode === 'block' || dec.data.mode === 'deny' || dec.data.blockStyle === 'exit2';
       if (!blocks) continue;
       const event = governingHookEvent(graph, dec.id);
+      if (event === 'PermissionDenied') continue; // CF113 owns this case
       if (event && !BLOCKABLE_EVENTS.has(event)) {
         diags.push({
           ruleId: 'CF101',
@@ -36,6 +37,15 @@ const cf101: Rule = {
           field: 'mode',
           message: `Blocking decision (${dec.data.mode}) on non-blockable event "${event}". Use a side-effect output instead.`,
           docsUrl: DOCS_URLS.hooks,
+          quickFix: {
+            title: 'Switch to a side-effect output (allow + additionalContext)',
+            apply: (g: WorkflowGraph) =>
+              patchNodeData(g, dec.id, 'output.decision', (d) => {
+                d.mode = 'allow';
+                d.blockStyle = 'json';
+                if (d.reason && !d.additionalContext) d.additionalContext = d.reason;
+              }),
+          },
         });
       }
     }
@@ -293,18 +303,19 @@ const cf109: Rule = {
 };
 
 // CF110 — hook.agent is experimental; require explicit ack (modeled as error+warn?).
-// Doc marks it error "require explicit ack"; we emit an error so the export gate
-// forces an acked decision only if the team downgrades; keep as error per catalog.
+// CF110 — hook.agent is experimental; require explicit ack. Warn (not error) so
+// the export gate actually lets the user ack it via meta.ackedWarnings, mirroring
+// CF404 (SPEC-VALIDATION.md:60). An error would be permanently unexportable.
 const cf110: Rule = {
   id: 'CF110',
-  severity: 'error',
+  severity: 'warn',
   run(graph) {
     return nodesOfKind(graph, 'hook.agent').map(
       (h): Diagnostic => ({
         ruleId: 'CF110',
-        severity: 'error',
+        severity: 'warn',
         nodeId: h.id,
-        message: 'hook.agent handler is experimental; requires explicit acknowledgment before export.',
+        message: 'hook.agent handler is experimental; acknowledge before export.',
         docsUrl: DOCS_URLS.hooks,
       }),
     );
@@ -326,6 +337,17 @@ const cf111: Rule = {
           nodeId,
           message: `${event} only supports command & mcp_tool handlers, not ${kindLabel}.`,
           docsUrl: DOCS_URLS.hooks,
+          quickFix: {
+            title: 'Change handler type to command',
+            apply: (g: WorkflowGraph) =>
+              mapNode(g, nodeId, (node) => ({
+                id: node.id,
+                kind: 'hook.command',
+                label: node.label,
+                position: node.position,
+                data: { command: 'echo', args: [] },
+              })),
+          },
         });
       }
     };

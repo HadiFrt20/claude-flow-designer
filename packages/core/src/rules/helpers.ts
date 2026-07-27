@@ -106,9 +106,11 @@ export function bashRuleCovers(allowedTools: readonly string[], cmdToken: string
     const m = /^Bash\(([^)]*)\)$/.exec(t.trim());
     if (!m) return t.trim() === 'Bash'; // bare Bash allows everything
     const pattern = m[1]!.trim();
-    // pattern like "git *" or "git status*" — match on the leading token(s).
-    const base = pattern.replace(/\*$/, '').trim();
-    if (base === '') return true;
-    return cmdToken === base || cmdToken.startsWith(base.split(/\s+/)[0]!);
+    if (pattern === '' || pattern === '*') return true;
+    // pattern like "git *" or "git status*" — its first whitespace-delimited
+    // token is the command. Match the command token exactly (word boundary),
+    // so an allow for `git` does NOT cover `github`.
+    const ruleCmd = pattern.split(/\s+/)[0]!.replace(/\*$/, '');
+    return cmdToken === ruleCmd;
   });
 }
