@@ -7,31 +7,35 @@ import { DOCS_URLS, KNOWN_MODELS, isHaiku } from './helpers.js';
 // Reserved / special env-var prefixes (REFERENCE: env vars).
 const VALID_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-// CF401 — effort xhigh|max targeted at settings.json (flaky).
+// CF401 — effort xhigh|max with no headless runner to carry the --effort CLI flag,
+// so it would have to live in settings.json (flaky). Per SPEC-CODEGEN, xhigh/max
+// goes to run.sh --effort ONLY; that path only exists when a headless runner does.
 const cf401: Rule = {
   id: 'CF401',
   severity: 'warn',
   run(graph) {
     const e = graph.settings.effort;
-    if (e === 'xhigh' || e === 'max') {
-      return [
-        {
-          ruleId: 'CF401',
-          severity: 'warn',
-          field: 'effort',
-          message: `effort "${e}" is unreliable in settings.json (issues #30726/#45453); codegen emits it as a --effort CLI flag instead.`,
-          docsUrl: DOCS_URLS.modelConfig,
-          quickFix: {
-            title: 'Move effort to a headless CLI flag',
-            apply: (g: WorkflowGraph) =>
-              patchSettings(g, (s) => {
-                s.headless = { ...(s.headless ?? { enabled: true }), enabled: true };
-              }),
-          },
+    if (e !== 'xhigh' && e !== 'max') return [];
+    const hasRunner =
+      graph.settings.headless?.enabled === true ||
+      graph.nodes.some((node) => node.kind === 'trigger.headless');
+    if (hasRunner) return [];
+    return [
+      {
+        ruleId: 'CF401',
+        severity: 'warn',
+        field: 'effort',
+        message: `effort "${e}" is unreliable in settings.json (issues #30726/#45453). With no headless runner it has no --effort CLI flag to live on; enable a runner or lower effort.`,
+        docsUrl: DOCS_URLS.modelConfig,
+        quickFix: {
+          title: 'Enable a headless runner (carries --effort as a CLI flag)',
+          apply: (g: WorkflowGraph) =>
+            patchSettings(g, (s) => {
+              s.headless = { ...(s.headless ?? { enabled: true }), enabled: true };
+            }),
         },
-      ];
-    }
-    return [];
+      },
+    ];
   },
 };
 
