@@ -12,5 +12,5 @@ else
   blocked=0
 fi
 if [ "$blocked" -eq 0 ]; then exit 0; fi
-jq -n --arg reason 'Destructive command blocked by the security gate.' '{ permissionDecisionReason: $reason, hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $reason } }'
+jq -n --arg reason 'Destructive command blocked by the security gate.' '{ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $reason } }'
 exit 0

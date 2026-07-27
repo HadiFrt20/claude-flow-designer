@@ -39,12 +39,12 @@ function decisionJsonArgs(event: HookEvent, dec: DecisionData): { args: string[]
     const pd = permissionDecision(dec.mode);
     const inner: string[] = [`hookEventName: "${event}"`];
     if (pd) inner.push(`permissionDecision: "${pd}"`);
-    if (dec.reason) addStr('permissionDecisionReason', 'reason', dec.reason);
-    // reason lives inside hookSpecificOutput for PreToolUse
-    const hso = dec.reason
-      ? `{ ${inner.join(', ')}, permissionDecisionReason: $reason }`
-      : `{ ${inner.join(', ')} }`;
-    parts.push(`hookSpecificOutput: ${hso}`);
+    // reason lives INSIDE hookSpecificOutput for PreToolUse/PermissionRequest.
+    if (dec.reason) {
+      args.push(`--arg reason ${shSingleQuote(dec.reason)}`);
+      inner.push('permissionDecisionReason: $reason');
+    }
+    parts.push(`hookSpecificOutput: { ${inner.join(', ')} }`);
   } else if (dec.mode === 'block') {
     parts.push('decision: "block"');
     if (dec.reason) addStr('reason', 'reason', dec.reason);

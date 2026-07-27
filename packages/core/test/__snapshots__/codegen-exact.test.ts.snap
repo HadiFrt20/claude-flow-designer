@@ -1,0 +1,41 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`codegen output is byte-exact against committed fixtures > pr-review: emits exactly the committed file set 1`] = `
+[
+  ".claude/settings.json",
+  ".claude/skills/pr-review/SKILL.md",
+  "flow.clauflow.json",
+]
+`;
+
+exports[`codegen output is byte-exact against committed fixtures > security-gate: emits exactly the committed file set 1`] = `
+[
+  ".claude/hooks/pretooluse-1.sh",
+  ".claude/settings.json",
+  "flow.clauflow.json",
+]
+`;
+
+exports[`codegen output is byte-exact against committed fixtures > session-context-loader: emits exactly the committed file set 1`] = `
+[
+  ".claude/hooks/sessionstart-1.sh",
+  ".claude/settings.json",
+  "flow.clauflow.json",
+]
+`;
+
+exports[`codegen output is byte-exact against committed fixtures > smart-commit: emits exactly the committed file set 1`] = `
+[
+  ".claude/settings.json",
+  ".claude/skills/smart-commit/SKILL.md",
+  "flow.clauflow.json",
+]
+`;
+
+exports[`codegen output is byte-exact against committed fixtures > test-fix-loop: emits exactly the committed file set 1`] = `
+[
+  ".claude/settings.json",
+  "flow.clauflow.json",
+  "run.sh",
+]
+`;
