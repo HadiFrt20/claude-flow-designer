@@ -17,6 +17,13 @@ allows, with live validation and live preview. Host-agnostic (HostBridge only).
 - Visual design per docs/DESIGN-BRIEF.md; tokens in canvas/src/tokens.ts mapped to
   --vscode-* variables with web fallbacks.
 
+## Carry-over from M1 review (non-blocking, address here)
+- Add a validation info/warn when a `reason` is set on a `PermissionRequest`
+  decision: Claude Code's PermissionRequest schema carries no reason field, so
+  codegen silently drops it today. Surface the drop rather than hiding it.
+- Tighten mutation coverage on `codegen/plugin.ts` (73%) and `importer.ts` (72%)
+  — the two weakest emitters — when canvas work lands.
+
 ## Out of scope
 File writing (hosts), import UI flows.
 

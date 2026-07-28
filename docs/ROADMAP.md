@@ -10,15 +10,15 @@
       end-to-end on a sample change.
 
 ## M1 — Codegen (headless-complete before any UI)
-- [ ] SKILL.md generator (frontmatter + body composition) + snapshots.
-- [ ] Subagent generator + snapshots.
-- [ ] Hooks generator: settings.json block + generated .sh scripts (exec form, jq guard,
+- [x] SKILL.md generator (frontmatter + body composition) + snapshots.
+- [x] Subagent generator + snapshots.
+- [x] Hooks generator: settings.json block + generated .sh scripts (exec form, jq guard,
       decision tails) + snapshots; shellcheck in CI.
-- [ ] GlobalSettings → settings.json + run.sh (model/effort/permission/headless flags).
-- [ ] Importer round-trip: generate → parse → deep-equal graph (property test).
-- [ ] Self-lint stage inside generate(): parse emitted JSON/YAML, frontmatter schema check,
+- [x] GlobalSettings → settings.json + run.sh (model/effort/permission/headless flags).
+- [x] Importer round-trip: generate → parse → deep-equal graph (property test).
+- [x] Self-lint stage inside generate(): parse emitted JSON/YAML, frontmatter schema check,
       shellcheck assertions (jq guard, exit-code tail matches blockability table).
-- [ ] Mutation testing (Stryker) on validate.ts + codegen ≥ 80% before starting M2.
+- [x] Mutation testing (Stryker) on validate.ts + codegen ≥ 80% before starting M2.
 
 ## M2 — Canvas
 - [ ] React Flow canvas: palette, drag/drop, edges, minimap, undo/redo.
