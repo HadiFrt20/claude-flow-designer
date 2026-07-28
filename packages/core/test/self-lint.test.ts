@@ -7,6 +7,24 @@ const ok = (over: Partial<GeneratedFile> & { path: string }): GeneratedFile => (
   ...over,
 });
 
+describe('selfLint path containment', () => {
+  const unsafe = [
+    '/etc/passwd',
+    '.claude/../../escape.md',
+    'a//b.json',
+    '.claude\\hooks\\x.sh',
+    '../outside.json',
+  ];
+  for (const p of unsafe) {
+    it(`rejects unsafe path ${p}`, () => {
+      expect(() => selfLint([ok({ path: p, content: '{}\n' })])).toThrow(/unsafe path/);
+    });
+  }
+  it('accepts a normal relative path', () => {
+    expect(() => selfLint([ok({ path: '.claude/skills/x/SKILL.md', content: '---\na: b\n---\n' })])).not.toThrow();
+  });
+});
+
 describe('selfLint', () => {
   it('accepts a valid JSON file', () => {
     expect(() => selfLint([ok({ path: 'x/settings.json', content: '{"a":1}\n' })])).not.toThrow();

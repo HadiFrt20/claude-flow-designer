@@ -3,6 +3,7 @@
 // (SPEC-CODEGEN "self-lint"; SPEC-REVIEW Loop B.)
 import yaml from 'js-yaml';
 import type { GeneratedFile } from '../schema/types.js';
+import { isSafePath } from './paths.js';
 
 export class SelfLintError extends Error {
   constructor(
@@ -61,6 +62,11 @@ function lintScript(file: GeneratedFile): void {
 /** Lint every generated file by type. Throws SelfLintError on the first problem. */
 export function selfLint(files: GeneratedFile[]): void {
   for (const file of files) {
+    // Containment first: no emitted path may escape the target directory. This is
+    // the single guard every host relies on (web dir-write/zip, VS Code workspace).
+    if (!isSafePath(file.path)) {
+      throw new SelfLintError('unsafe path — escapes the target directory', file.path);
+    }
     if (file.path.endsWith('.json')) lintJson(file);
     else if (file.path.endsWith('.sh')) lintScript(file);
     else if (file.path.endsWith('.md')) lintFrontmatter(file);

@@ -7,6 +7,7 @@ export * from './diagnostics.js';
 export * from './validate.js';
 export { generate, ExportGateError, SelfLintError } from './codegen/index.js';
 export type { GenerateOptions } from './codegen/index.js';
+export { isSafePath, safePathSegments } from './codegen/paths.js';
 export { parseProject } from './importer.js';
 export { TEMPLATES } from './templates.js';
 export type { Template } from './templates.js';

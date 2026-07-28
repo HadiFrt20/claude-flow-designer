@@ -2,6 +2,7 @@
 // the flat write plan a directory writer will apply. Kept side-effect-free so it
 // unit-tests in node; the browser glue (download / FS Access) lives in hostBridge.ts.
 import JSZip from 'jszip';
+import { safePathSegments } from '@clauflow/core';
 import type { GeneratedFile } from '@clauflow/core';
 
 export interface DirEntry {
@@ -11,22 +12,16 @@ export interface DirEntry {
 }
 
 /**
- * THE single path-safety choke point for every writer (zip AND directory). Split
- * each file path into directory segments so a writer can mkdir -p then write the
- * leaf, refusing anything that could escape the chosen directory: absolute paths,
- * `.`/`..` segments, empty segments (`a//b`), or Windows-style backslashes (which
- * some extractors treat as separators). Both buildZip and the FS Access writer
- * route through this, so neither can be tricked by a hostile node name.
+ * Path-safety choke point for the web writers (zip AND directory). Delegates the
+ * safe/unsafe decision to core's safePathSegments (the same check generate()'s
+ * self-lint enforces), so containment is defined once. Refuses absolute paths,
+ * `.`/`..` or empty segments, and backslashes — anything that could escape the
+ * chosen directory. Both buildZip and the FS Access writer route through this.
  */
 export function toDirEntries(files: GeneratedFile[]): DirEntry[] {
   return files.map((file) => {
-    const path = file.path;
-    const segments = path.split('/');
-    const unsafe =
-      path.startsWith('/') ||
-      path.includes('\\') ||
-      segments.some((s) => s === '' || s === '.' || s === '..');
-    if (unsafe) throw new Error(`unsafe generated path refused: ${path}`);
+    const segments = safePathSegments(file.path);
+    if (segments === null) throw new Error(`unsafe generated path refused: ${file.path}`);
     return { segments, file };
   });
 }
