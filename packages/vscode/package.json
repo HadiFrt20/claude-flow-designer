@@ -3,7 +3,8 @@
   "displayName": "Claude Flow Designer",
   "description": "Visual workflow designer for Claude Code: design on a canvas, export skills, subagents, hooks, and settings.",
   "version": "0.1.0",
-  "publisher": "your-publisher",
+  "publisher": "clauflow",
+  "repository": { "type": "git", "url": "https://github.com/HadiFrt20/claude-flow-designer.git" },
   "engines": { "vscode": "^1.90.0" },
   "categories": ["AI", "Visualization"],
   "main": "./dist/extension.js",
@@ -18,15 +19,32 @@
       { "command": "claudeFlow.new", "title": "Claude Flow: New Workflow" },
       { "command": "claudeFlow.import", "title": "Claude Flow: Import from .claude/" },
       { "command": "claudeFlow.export", "title": "Claude Flow: Export to .claude/" },
-      { "command": "claudeFlow.run", "title": "Claude Flow: Run Workflow (terminal)" }
+      { "command": "claudeFlow.run", "title": "Claude Flow: Run Workflow (terminal)" },
+      { "command": "claudeFlow.refreshAssets", "title": "Claude Flow: Refresh Workflows", "icon": "$(refresh)" }
     ],
-    "views": { "explorer": [{ "id": "claudeFlow.assets", "name": "Claude Workflows" }] }
+    "views": { "explorer": [{ "id": "claudeFlow.assets", "name": "Claude Workflows" }] },
+    "menus": {
+      "view/title": [
+        { "command": "claudeFlow.refreshAssets", "when": "view == claudeFlow.assets", "group": "navigation" }
+      ]
+    }
   },
   "scripts": {
-    "build": "esbuild src/extension.ts --bundle --platform=node --external:vscode --outfile=dist/extension.js",
-    "watch": "npm run build -- --watch",
-    "package": "vsce package"
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "package": "vsce package --no-dependencies"
   },
-  "devDependencies": { "@types/vscode": "^1.90.0", "esbuild": "^0.23.0", "@vscode/vsce": "^3.0.0" },
-  "dependencies": { "@clauflow/core": "*" }
+  "devDependencies": {
+    "@types/vscode": "^1.90.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "esbuild": "^0.23.0",
+    "@vscode/vsce": "^3.0.0"
+  },
+  "dependencies": {
+    "@clauflow/core": "*",
+    "@clauflow/canvas": "*",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0"
+  }
 }

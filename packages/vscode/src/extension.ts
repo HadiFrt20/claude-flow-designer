@@ -1,14 +1,385 @@
+// VS Code extension host. Registers the custom editor for *.clauflow.json (canvas
+// webview), the new/import/export/run commands, and the "Claude Workflows" tree
+// view. The extension host owns ALL filesystem access; the webview talks to it
+// only through the typed postMessage protocol (src/protocol.ts). FS logic is the
+// pure host-fs.ts module — this file is the thin vscode-API adapter over it.
 import * as vscode from 'vscode';
+import {
+  generate,
+  parseProject,
+  safeParseGraph,
+  serializeGraph,
+  emptyGraph,
+  ExportGateError,
+} from '@clauflow/core';
+import type { GeneratedFile, WorkflowGraph } from '@clauflow/core';
+import { isWebviewToHost, type HostToWebview } from './protocol.js';
+import {
+  planExport,
+  changesToWrite,
+  collectWorkspaceAssets,
+  detectAssets,
+  runnerCommand,
+  type FsAccess,
+} from './host-fs.js';
 
-export function activate(ctx: vscode.ExtensionContext) {
+export function activate(ctx: vscode.ExtensionContext): void {
+  const assets = new AssetsTreeProvider();
   ctx.subscriptions.push(
-    vscode.commands.registerCommand('claudeFlow.new', () => {
-      // M4: create untitled *.clauflow.json and open the custom editor webview
-      vscode.window.showInformationMessage('Claude Flow: new workflow (TODO M4)');
-    }),
+    vscode.window.registerCustomEditorProvider(
+      'clauflow.editor',
+      new ClauflowEditorProvider(ctx),
+      { webviewOptions: { retainContextWhenHidden: true }, supportsMultipleEditorsPerDocument: false },
+    ),
+    vscode.commands.registerCommand('claudeFlow.new', () => newWorkflow()),
+    vscode.commands.registerCommand('claudeFlow.import', () => importToNewGraph()),
+    vscode.commands.registerCommand('claudeFlow.export', () => exportActiveGraph()),
+    vscode.commands.registerCommand('claudeFlow.run', () => runActiveGraph()),
+    vscode.window.registerTreeDataProvider('claudeFlow.assets', assets),
+    vscode.commands.registerCommand('claudeFlow.refreshAssets', () => assets.refresh()),
   );
-  // M4: register custom editor (clauflow.editor), tree view, import/export/run commands.
-  // Webview loads the @clauflow/canvas bundle; HostBridge implemented over postMessage.
 }
 
-export function deactivate() {}
+export function deactivate(): void {}
+
+// --- workspace fs adapter (implements the pure FsAccess surface) ------------
+function workspaceFs(): FsAccess | null {
+  const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+  if (!root) return null;
+  const abs = (rel: string) => vscode.Uri.joinPath(root, rel);
+  return {
+    async read(rel) {
+      try {
+        return Buffer.from(await vscode.workspace.fs.readFile(abs(rel))).toString('utf8');
+      } catch {
+        return null;
+      }
+    },
+    async write(rel, content) {
+      const uri = abs(rel);
+      const dir = vscode.Uri.joinPath(uri, '..');
+      await vscode.workspace.fs.createDirectory(dir);
+      await vscode.workspace.fs.writeFile(uri, Buffer.from(content, 'utf8'));
+    },
+    async list(rel) {
+      const dirUri = rel === '.' ? root : abs(rel);
+      return listRecursive(dirUri, root);
+    },
+  };
+}
+
+async function listRecursive(dir: vscode.Uri, root: vscode.Uri): Promise<string[]> {
+  const out: string[] = [];
+  let entries: [string, vscode.FileType][];
+  try {
+    entries = await vscode.workspace.fs.readDirectory(dir);
+  } catch {
+    return out;
+  }
+  for (const [name, kind] of entries) {
+    const child = vscode.Uri.joinPath(dir, name);
+    const rel = child.path.slice(root.path.length + 1);
+    if (kind === vscode.FileType.Directory) {
+      if (name === 'node_modules' || name === '.git') continue;
+      out.push(...(await listRecursive(child, root)));
+    } else {
+      out.push(rel);
+    }
+  }
+  return out;
+}
+
+// --- custom editor ----------------------------------------------------------
+class ClauflowEditorProvider implements vscode.CustomTextEditorProvider {
+  constructor(private ctx: vscode.ExtensionContext) {}
+
+  async resolveCustomTextEditor(
+    document: vscode.TextDocument,
+    panel: vscode.WebviewPanel,
+  ): Promise<void> {
+    panel.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [vscode.Uri.joinPath(this.ctx.extensionUri, 'dist')],
+    };
+    panel.webview.html = webviewHtml(panel.webview, this.ctx.extensionUri);
+
+    const graphOf = (): WorkflowGraph => {
+      const parsed = safeParseGraph(safeJson(document.getText()));
+      return parsed.success ? parsed.data : emptyGraph('Untitled', 'untitled');
+    };
+
+    const postToWebview = (msg: HostToWebview) => void panel.webview.postMessage(msg);
+
+    const sub = panel.webview.onDidReceiveMessage(async (raw) => {
+      if (!isWebviewToHost(raw)) return;
+      switch (raw.type) {
+        case 'ready':
+          postToWebview({ type: 'load', graph: graphOf() });
+          break;
+        case 'edit':
+          await applyEdit(document, raw.graph);
+          break;
+        case 'export':
+          await doExport(raw.files, postToWebview);
+          break;
+        case 'import': {
+          const g = await readWorkspaceGraph();
+          postToWebview(g ? { type: 'imported', graph: g } : { type: 'error', message: 'No .claude assets found.' });
+          break;
+        }
+        case 'run':
+          runInTerminal(raw.command);
+          break;
+        case 'notify':
+          notify(raw.level, raw.message);
+          break;
+      }
+    });
+
+    // Reflect external document edits (e.g. git checkout) back into the webview.
+    const changeSub = vscode.workspace.onDidChangeTextDocument((e) => {
+      if (e.document.uri.toString() === document.uri.toString()) {
+        postToWebview({ type: 'load', graph: graphOf() });
+      }
+    });
+
+    panel.onDidDispose(() => {
+      sub.dispose();
+      changeSub.dispose();
+    });
+  }
+}
+
+/** Write the graph back into the document (round-trips through canonical JSON). */
+async function applyEdit(document: vscode.TextDocument, graph: WorkflowGraph): Promise<void> {
+  const next = serializeGraph(graph);
+  if (next === document.getText()) return;
+  const edit = new vscode.WorkspaceEdit();
+  edit.replace(document.uri, new vscode.Range(0, 0, document.lineCount, 0), next);
+  await vscode.workspace.applyEdit(edit);
+}
+
+// --- commands ---------------------------------------------------------------
+async function newWorkflow(): Promise<void> {
+  const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+  if (!root) {
+    notify('error', 'Open a folder first.');
+    return;
+  }
+  const uri = vscode.Uri.joinPath(root, 'workflow.clauflow.json');
+  await vscode.workspace.fs.writeFile(uri, Buffer.from(serializeGraph(emptyGraph('Untitled workflow', 'untitled')), 'utf8'));
+  await vscode.commands.executeCommand('vscode.openWith', uri, 'clauflow.editor');
+}
+
+async function importToNewGraph(): Promise<void> {
+  const g = await readWorkspaceGraph();
+  if (!g) {
+    notify('warn', 'No .claude assets found in this workspace.');
+    return;
+  }
+  const root = vscode.workspace.workspaceFolders![0]!.uri;
+  const uri = vscode.Uri.joinPath(root, `${g.meta.slug || 'imported'}.clauflow.json`);
+  await vscode.workspace.fs.writeFile(uri, Buffer.from(serializeGraph(g), 'utf8'));
+  await vscode.commands.executeCommand('vscode.openWith', uri, 'clauflow.editor');
+}
+
+async function exportActiveGraph(): Promise<void> {
+  const graph = await activeGraph();
+  if (!graph) return;
+  let files: GeneratedFile[];
+  try {
+    files = generate(graph);
+  } catch (err) {
+    notify('error', err instanceof ExportGateError ? `Export blocked: ${err.message}` : String(err));
+    return;
+  }
+  await doExport(files, () => {});
+}
+
+async function runActiveGraph(): Promise<void> {
+  const graph = await activeGraph();
+  if (!graph) return;
+  let files: GeneratedFile[];
+  try {
+    files = generate(graph);
+  } catch (err) {
+    notify('error', String(err));
+    return;
+  }
+  const cmd = runnerCommand(files);
+  if (!cmd) {
+    notify('warn', 'This workflow has no headless runner (add a headless trigger or enable it in settings).');
+    return;
+  }
+  runInTerminal(cmd);
+}
+
+// --- shared host operations -------------------------------------------------
+async function doExport(files: GeneratedFile[], reply: (m: HostToWebview) => void): Promise<void> {
+  const fs = workspaceFs();
+  if (!fs) {
+    notify('error', 'Open a folder to export into.');
+    reply({ type: 'error', message: 'No workspace folder.' });
+    return;
+  }
+  let plan;
+  try {
+    plan = await planExport(files, fs);
+  } catch (err) {
+    notify('error', String(err));
+    reply({ type: 'error', message: String(err) });
+    return;
+  }
+  const toWrite = changesToWrite(plan);
+  if (toWrite.length === 0) {
+    notify('info', 'Nothing to write — .claude is already up to date.');
+    reply({ type: 'exported', written: [], skipped: plan.map((c) => c.path) });
+    return;
+  }
+  const choice = await vscode.window.showInformationMessage(
+    `Write ${toWrite.length} file(s) to .claude?`,
+    { modal: true, detail: toWrite.map((c) => `${c.kind === 'create' ? '＋' : '～'} ${c.path}`).join('\n') },
+    'Write',
+  );
+  if (choice !== 'Write') {
+    reply({ type: 'exported', written: [], skipped: files.map((f) => f.path) });
+    return;
+  }
+  const written: string[] = [];
+  for (const c of toWrite) {
+    await fs.write(c.path, c.content);
+    written.push(c.path);
+  }
+  notify('info', `Wrote ${written.length} file(s) to .claude.`);
+  reply({ type: 'exported', written, skipped: plan.filter((c) => c.kind === 'unchanged').map((c) => c.path) });
+}
+
+async function readWorkspaceGraph(): Promise<WorkflowGraph | null> {
+  const fs = workspaceFs();
+  if (!fs) return null;
+  const files = await collectWorkspaceAssets(fs);
+  return files.length ? parseProject(files) : null;
+}
+
+async function activeGraph(): Promise<WorkflowGraph | null> {
+  const doc = vscode.window.activeTextEditor?.document
+    ?? vscode.workspace.textDocuments.find((d) => d.fileName.endsWith('.clauflow.json'));
+  if (!doc) {
+    notify('warn', 'Open a .clauflow.json workflow first.');
+    return null;
+  }
+  const parsed = safeParseGraph(safeJson(doc.getText()));
+  if (!parsed.success) {
+    notify('error', 'Active document is not a valid workflow graph.');
+    return null;
+  }
+  return parsed.data;
+}
+
+function runInTerminal(command: string): void {
+  const term = vscode.window.createTerminal('Claude Flow');
+  term.show();
+  term.sendText(command, false);
+}
+
+function notify(level: 'info' | 'warn' | 'error', message: string): void {
+  if (level === 'error') void vscode.window.showErrorMessage(message);
+  else if (level === 'warn') void vscode.window.showWarningMessage(message);
+  else void vscode.window.showInformationMessage(message);
+}
+
+function safeJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+// --- tree view --------------------------------------------------------------
+class AssetsTreeProvider implements vscode.TreeDataProvider<AssetItem> {
+  private emitter = new vscode.EventEmitter<AssetItem | undefined>();
+  readonly onDidChangeTreeData = this.emitter.event;
+
+  refresh(): void {
+    this.emitter.fire(undefined);
+  }
+
+  getTreeItem(item: AssetItem): vscode.TreeItem {
+    return item;
+  }
+
+  async getChildren(item?: AssetItem): Promise<AssetItem[]> {
+    const fs = workspaceFs();
+    if (!fs) return [];
+    const detected = detectAssets(await fs.list('.'));
+    if (!item) {
+      return [
+        group('Skills', detected.skills),
+        group('Subagents', detected.agents),
+        group('Hooks', detected.hooks),
+        group('Graphs', detected.graphs),
+      ].filter((g): g is AssetItem => g !== null);
+    }
+    return (item.children ?? []).map((p) => {
+      const leaf = new AssetItem(p, vscode.TreeItemCollapsibleState.None);
+      leaf.command = { command: 'claudeFlow.import', title: 'Import' };
+      leaf.resourceUri = fileUri(p);
+      return leaf;
+    });
+  }
+}
+
+function group(label: string, paths: string[]): AssetItem | null {
+  if (paths.length === 0) return null;
+  const item = new AssetItem(`${label} (${paths.length})`, vscode.TreeItemCollapsibleState.Collapsed);
+  item.children = paths;
+  return item;
+}
+
+function fileUri(rel: string): vscode.Uri | undefined {
+  const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+  return root ? vscode.Uri.joinPath(root, rel) : undefined;
+}
+
+class AssetItem extends vscode.TreeItem {
+  children?: string[];
+  constructor(label: string, state: vscode.TreeItemCollapsibleState) {
+    super(label, state);
+  }
+}
+
+// --- webview html (strict CSP + nonce) --------------------------------------
+function webviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
+  const script = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'dist', 'webview.js'));
+  const style = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'dist', 'webview.css'));
+  const nonce = makeNonce();
+  const csp = [
+    `default-src 'none'`,
+    `img-src ${webview.cspSource} data:`,
+    `style-src ${webview.cspSource} 'unsafe-inline'`,
+    `font-src ${webview.cspSource}`,
+    `script-src 'nonce-${nonce}'`,
+  ].join('; ');
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="${csp}" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="${style}" />
+    <title>Claude Flow Designer</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script nonce="${nonce}" src="${script}"></script>
+  </body>
+</html>`;
+}
+
+function makeNonce(): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let out = '';
+  for (let i = 0; i < 32; i++) out += chars[Math.floor(Math.random() * chars.length)];
+  return out;
+}
