@@ -25,9 +25,14 @@ export class EditorStore {
   private selectedNodeId: string | null = null;
   private listeners = new Set<Listener>();
   private clipboard: WorkflowNode | null = null;
+  // Cached immutable snapshot for useSyncExternalStore — a stable reference is
+  // required (a fresh object each call causes an infinite render loop). Rebuilt
+  // only when graph or selection actually changes.
+  private snapshot: EditorState;
 
   constructor(initial?: WorkflowGraph) {
     this.graph = initial ? clone(initial) : emptyGraph('Untitled', 'untitled');
+    this.snapshot = { graph: this.graph, selectedNodeId: this.selectedNodeId };
   }
 
   // --- subscription (React useSyncExternalStore) ---------------------------
@@ -36,9 +41,10 @@ export class EditorStore {
     return () => this.listeners.delete(listener);
   };
 
-  getState = (): EditorState => ({ graph: this.graph, selectedNodeId: this.selectedNodeId });
+  getState = (): EditorState => this.snapshot;
 
   private emit(): void {
+    this.snapshot = { graph: this.graph, selectedNodeId: this.selectedNodeId };
     for (const l of this.listeners) l();
   }
 

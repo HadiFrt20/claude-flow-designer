@@ -1,5 +1,6 @@
 export * from './tokens.js';
 export * from './store.js';
+export * from './useEditor.js';
 export type { HostBridge, WriteResult } from './hostBridge.js';
-// React components are exported from ./components (added below).
 export * from './fields.js';
+export * from './components/index.js';
