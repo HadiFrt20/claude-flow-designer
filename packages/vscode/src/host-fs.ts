@@ -98,9 +98,13 @@ export function detectAssets(paths: string[]): DetectedAssets {
 }
 
 /**
- * Extract the exact `claude …` invocation from a generated run.sh, joining a
- * multi-line command into one shell line (fixes the M2 runnerCommand truncation
- * carry-over so `run` gets the full command, not just the first line).
+ * Extract the exact `claude …` invocation from a generated run.sh. The claude
+ * call is always the final statement of run.sh (SPEC-CODEGEN "Generated script
+ * conventions"), so we take everything from the `claude ` line to the end and
+ * trim trailing blank lines — covering multi-line prompts (fixes the M2
+ * truncation) without a fragile quote-balancing heuristic (which mis-counted
+ * shSingleQuote's `'\''` apostrophe escapes and could leave a trailing newline
+ * that auto-runs the terminal command).
  */
 export function runnerCommand(files: GeneratedFile[]): string | null {
   const run = files.find((f) => f.path === 'run.sh');
@@ -108,17 +112,5 @@ export function runnerCommand(files: GeneratedFile[]): string | null {
   const lines = run.content.split('\n');
   const start = lines.findIndex((l) => l.startsWith('claude '));
   if (start === -1) return null;
-  // Collect continuation lines (a trailing backslash or an unterminated quote).
-  const parts = [lines[start]!];
-  for (let i = start + 1; i < lines.length; i++) {
-    const prev = parts[parts.length - 1]!;
-    if (prev.endsWith('\\') || unbalancedQuote(parts.join('\n'))) parts.push(lines[i]!);
-    else break;
-  }
-  return parts.join('\n');
-}
-
-function unbalancedQuote(s: string): boolean {
-  const singles = (s.match(/'/g) ?? []).length;
-  return singles % 2 === 1;
+  return lines.slice(start).join('\n').replace(/\n+$/, '');
 }

@@ -10,8 +10,8 @@ export type WebviewToHost =
   | { type: 'edit'; graph: WorkflowGraph } // graph changed → host updates the document
   | { type: 'export'; files: GeneratedFile[] } // request write to workspace .claude
   | { type: 'import' } // request: read workspace .claude → graph
-  | { type: 'run'; command: string } // request: open a terminal running this command
   | { type: 'notify'; level: NotifyLevel; message: string };
+// Note: "run" is a command-palette action (claudeFlow.run), not a webview message.
 
 /** Messages the extension host posts TO the webview. */
 export type HostToWebview =
@@ -25,7 +25,7 @@ export type NotifyLevel = 'info' | 'warn' | 'error';
 export function isWebviewToHost(m: unknown): m is WebviewToHost {
   if (!m || typeof m !== 'object' || typeof (m as { type?: unknown }).type !== 'string') return false;
   const t = (m as { type: string }).type;
-  return ['ready', 'edit', 'export', 'import', 'run', 'notify'].includes(t);
+  return ['ready', 'edit', 'export', 'import', 'notify'].includes(t);
 }
 
 export function isHostToWebview(m: unknown): m is HostToWebview {

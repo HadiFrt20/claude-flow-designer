@@ -21,6 +21,7 @@ import {
   detectAssets,
   runnerCommand,
   type FsAccess,
+  type FileChange,
 } from './host-fs.js';
 
 export function activate(ctx: vscode.ExtensionContext): void {
@@ -31,6 +32,7 @@ export function activate(ctx: vscode.ExtensionContext): void {
       new ClauflowEditorProvider(ctx),
       { webviewOptions: { retainContextWhenHidden: true }, supportsMultipleEditorsPerDocument: false },
     ),
+    vscode.workspace.registerTextDocumentContentProvider('clauflow-preview', previewContentProvider),
     vscode.commands.registerCommand('claudeFlow.new', () => newWorkflow()),
     vscode.commands.registerCommand('claudeFlow.import', () => importToNewGraph()),
     vscode.commands.registerCommand('claudeFlow.export', () => exportActiveGraph()),
@@ -41,6 +43,18 @@ export function activate(ctx: vscode.ExtensionContext): void {
 }
 
 export function deactivate(): void {}
+
+// Serves proposed generated content for the native diff view. The content is
+// URI-encoded in the query so the provider is stateless.
+const previewContentProvider: vscode.TextDocumentContentProvider = {
+  provideTextDocumentContent(uri: vscode.Uri): string {
+    return decodeURIComponent(uri.query);
+  },
+};
+
+function previewUri(path: string, content: string): vscode.Uri {
+  return vscode.Uri.parse(`clauflow-preview:${path}`).with({ query: encodeURIComponent(content) });
+}
 
 // --- workspace fs adapter (implements the pure FsAccess surface) ------------
 function workspaceFs(): FsAccess | null {
@@ -110,6 +124,11 @@ class ClauflowEditorProvider implements vscode.CustomTextEditorProvider {
 
     const postToWebview = (msg: HostToWebview) => void panel.webview.postMessage(msg);
 
+    // Text the host itself last wrote to the document. Used to suppress the
+    // change-event echo of our own writes so the webview only reloads (and
+    // rebuilds its store) on GENUINELY external edits (git checkout, manual edit).
+    let selfWritten: string | null = null;
+
     const sub = panel.webview.onDidReceiveMessage(async (raw) => {
       if (!isWebviewToHost(raw)) return;
       switch (raw.type) {
@@ -117,7 +136,7 @@ class ClauflowEditorProvider implements vscode.CustomTextEditorProvider {
           postToWebview({ type: 'load', graph: graphOf() });
           break;
         case 'edit':
-          await applyEdit(document, raw.graph);
+          selfWritten = await applyEdit(document, raw.graph);
           break;
         case 'export':
           await doExport(raw.files, postToWebview);
@@ -127,20 +146,21 @@ class ClauflowEditorProvider implements vscode.CustomTextEditorProvider {
           postToWebview(g ? { type: 'imported', graph: g } : { type: 'error', message: 'No .claude assets found.' });
           break;
         }
-        case 'run':
-          runInTerminal(raw.command);
-          break;
         case 'notify':
           notify(raw.level, raw.message);
           break;
       }
     });
 
-    // Reflect external document edits (e.g. git checkout) back into the webview.
+    // Reflect EXTERNAL document edits (git checkout, manual edit) back into the
+    // webview. Skip the echo of our own applyEdit writes — otherwise every canvas
+    // edit would round-trip a 'load' and rebuild the store, wiping undo/redo and
+    // the current selection.
     const changeSub = vscode.workspace.onDidChangeTextDocument((e) => {
-      if (e.document.uri.toString() === document.uri.toString()) {
-        postToWebview({ type: 'load', graph: graphOf() });
-      }
+      if (e.document.uri.toString() !== document.uri.toString()) return;
+      const text = e.document.getText();
+      if (text === selfWritten) return; // our own write — already reflected
+      postToWebview({ type: 'load', graph: graphOf() });
     });
 
     panel.onDidDispose(() => {
@@ -150,13 +170,18 @@ class ClauflowEditorProvider implements vscode.CustomTextEditorProvider {
   }
 }
 
-/** Write the graph back into the document (round-trips through canonical JSON). */
-async function applyEdit(document: vscode.TextDocument, graph: WorkflowGraph): Promise<void> {
+/**
+ * Write the graph back into the document (round-trips through canonical JSON).
+ * Returns the text now in the document so the caller can recognise (and ignore)
+ * the resulting change event as its own.
+ */
+async function applyEdit(document: vscode.TextDocument, graph: WorkflowGraph): Promise<string> {
   const next = serializeGraph(graph);
-  if (next === document.getText()) return;
+  if (next === document.getText()) return next;
   const edit = new vscode.WorkspaceEdit();
   edit.replace(document.uri, new vscode.Range(0, 0, document.lineCount, 0), next);
   await vscode.workspace.applyEdit(edit);
+  return next;
 }
 
 // --- commands ---------------------------------------------------------------
@@ -236,14 +261,26 @@ async function doExport(files: GeneratedFile[], reply: (m: HostToWebview) => voi
     reply({ type: 'exported', written: [], skipped: plan.map((c) => c.path) });
     return;
   }
-  const choice = await vscode.window.showInformationMessage(
-    `Write ${toWrite.length} file(s) to .claude?`,
-    { modal: true, detail: toWrite.map((c) => `${c.kind === 'create' ? '＋' : '～'} ${c.path}`).join('\n') },
-    'Write',
-  );
-  if (choice !== 'Write') {
-    reply({ type: 'exported', written: [], skipped: files.map((f) => f.path) });
-    return;
+  const modified = toWrite.filter((c) => c.kind === 'modify');
+  const detail = toWrite.map((c) => `${c.kind === 'create' ? '＋' : '～'} ${c.path}`).join('\n');
+  // Confirm loop: user can open a native per-file diff for modified files before
+  // deciding. "Write" commits; anything else cancels.
+  for (;;) {
+    const actions = modified.length ? (['Write', 'Show diff'] as const) : (['Write'] as const);
+    const choice = await vscode.window.showInformationMessage(
+      `Write ${toWrite.length} file(s) to .claude?`,
+      { modal: true, detail },
+      ...actions,
+    );
+    if (choice === 'Show diff') {
+      await showExportDiffs(modified);
+      continue;
+    }
+    if (choice !== 'Write') {
+      reply({ type: 'exported', written: [], skipped: files.map((f) => f.path) });
+      return;
+    }
+    break;
   }
   const written: string[] = [];
   for (const c of toWrite) {
@@ -252,6 +289,18 @@ async function doExport(files: GeneratedFile[], reply: (m: HostToWebview) => voi
   }
   notify('info', `Wrote ${written.length} file(s) to .claude.`);
   reply({ type: 'exported', written, skipped: plan.filter((c) => c.kind === 'unchanged').map((c) => c.path) });
+}
+
+/** Open a native diff (current on-disk ⇢ proposed) for each modified file. */
+async function showExportDiffs(modified: FileChange[]): Promise<void> {
+  const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+  if (!root) return;
+  for (const c of modified) {
+    if (c.kind !== 'modify') continue;
+    const left = vscode.Uri.joinPath(root, c.path); // current file on disk
+    const right = previewUri(c.path, c.content); // proposed content (virtual)
+    await vscode.commands.executeCommand('vscode.diff', left, right, `${c.path} (current ⇢ proposed)`);
+  }
 }
 
 async function readWorkspaceGraph(): Promise<WorkflowGraph | null> {
@@ -378,8 +427,7 @@ function webviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string 
 }
 
 function makeNonce(): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let out = '';
-  for (let i = 0; i < 32; i++) out += chars[Math.floor(Math.random() * chars.length)];
-  return out;
+  // Cryptographically strong, unguessable CSP nonce (matches the official VS Code
+  // webview sample) — Math.random() is not suitable for a security token.
+  return crypto.randomUUID().replace(/-/g, '');
 }

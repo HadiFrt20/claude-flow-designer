@@ -5,7 +5,12 @@ describe('message guards', () => {
   it('accepts valid webview→host messages', () => {
     expect(isWebviewToHost({ type: 'ready' })).toBe(true);
     expect(isWebviewToHost({ type: 'edit', graph: {} })).toBe(true);
-    expect(isWebviewToHost({ type: 'run', command: 'claude -p x' })).toBe(true);
+    expect(isWebviewToHost({ type: 'export', files: [] })).toBe(true);
+    expect(isWebviewToHost({ type: 'notify', level: 'info', message: 'x' })).toBe(true);
+  });
+
+  it('rejects the retired run message (run is a command, not a webview message)', () => {
+    expect(isWebviewToHost({ type: 'run', command: 'claude -p x' })).toBe(false);
   });
 
   it('accepts valid host→webview messages', () => {

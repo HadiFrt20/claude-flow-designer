@@ -105,6 +105,16 @@ describe('runnerCommand', () => {
     expect(cmd).toBe("claude -p 'line one\nline two' --verbose");
   });
 
+  it('handles a prompt with an escaped apostrophe and leaves no trailing newline', () => {
+    // shSingleQuote escapes an apostrophe as '\'' → an odd count of quote chars,
+    // which the old balance heuristic mis-read. The command must be a single line
+    // with no trailing newline (a trailing \n would auto-run in the terminal).
+    const runSh = "#!/bin/bash\nset -euo pipefail\nclaude -p 'fix the app'\\''s tests'\n";
+    const cmd = runnerCommand([{ path: 'run.sh', content: runSh }]);
+    expect(cmd).toBe("claude -p 'fix the app'\\''s tests'");
+    expect(cmd!.endsWith('\n')).toBe(false);
+  });
+
   it('returns null when there is no run.sh', () => {
     expect(runnerCommand([{ path: 'x.md', content: 'hi' }])).toBeNull();
   });

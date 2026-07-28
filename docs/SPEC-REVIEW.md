@@ -19,9 +19,10 @@ Two distinct review loops. Don't conflate them:
    exploratory sessions (documented, discouraged).
 3. **/review-pr skill (pre-PR, human-invoked or auto before commit skills)** — delegates
    to the `code-reviewer` subagent (own context window, read-only tools) with the diff.
-4. **CI (.github/workflows/ci.yml)** — lint, typecheck, full vitest, validation-matrix
-   test, codegen snapshots, shellcheck on regenerated gallery fixtures, round-trip
-   property test, `vsce package --no-git-tag-version` dry-run on the extension.
+4. **CI (.github/workflows/ci.yml)** — lint, typecheck, build, full vitest,
+   validation-matrix test, codegen snapshots, shellcheck on regenerated gallery
+   fixtures, round-trip property test, and a real `vsce package` of the extension
+   (`.vsix` must build).
 5. **Human merge** — PR template checklist must be completed; CI green is necessary,
    not sufficient.
 

@@ -1,6 +1,6 @@
 // Webview entry: mounts the shared Designer and bridges to the extension host
 // over postMessage. The host owns the filesystem; the webview owns the graph.
-import { StrictMode, useEffect, useState } from 'react';
+import { StrictMode, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Designer, EditorStore } from '@clauflow/canvas';
 import type { HostBridge, WriteResult } from '@clauflow/canvas';
@@ -74,16 +74,25 @@ class VsCodeHostBridge implements HostBridge {
 function Root() {
   const [store, setStore] = useState<EditorStore | null>(null);
   const [bridge] = useState(() => new VsCodeHostBridge());
+  const storeRef = useRef<EditorStore | null>(null);
 
   useEffect(() => {
     const onMessage = (e: MessageEvent) => {
       const msg = e.data;
       bridge.handleMessage(msg);
-      if (isHostToWebview(msg) && msg.type === 'load') {
+      if (!isHostToWebview(msg) || msg.type !== 'load') return;
+
+      const existing = storeRef.current;
+      if (!existing) {
+        // First load: create the store and wire edit-persist once.
         const s = new EditorStore(msg.graph);
-        // Persist edits back to the document via the host.
         s.subscribe(() => post({ type: 'edit', graph: s.current }));
+        storeRef.current = s;
         setStore(s);
+      } else if (JSON.stringify(msg.graph) !== JSON.stringify(existing.current)) {
+        // Genuine external change: replace content IN PLACE (keeps the store
+        // instance + its subscription; the host already suppresses self-echoes).
+        existing.replaceGraph(msg.graph);
       }
     };
     window.addEventListener('message', onMessage);
