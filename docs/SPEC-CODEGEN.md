@@ -54,6 +54,9 @@ model: <model or omit>
 ---
 <systemPrompt body>
 ```
+`data.frontmatterHooks` is designer-only metadata that drives CF303 (the "Stop →
+SubagentStop" advisory); it is NOT emitted to the agent file (M1 does not model
+per-agent hook handlers). `data.extra` unknown keys ARE re-emitted verbatim.
 
 ## Hooks mapping → settings.json `hooks` block
 
@@ -71,14 +74,20 @@ Handler emission by node kind:
 
 ### Decision output → script body
 
-`output.decision` connected downstream of a hook determines the generated script's tail:
-| mode | emission |
+`output.decision` connected downstream of a hook determines the generated script's tail.
+JSON shapes are per-event (verified against code.claude.com/docs/en/hooks):
+| mode / event | emission |
 |---|---|
-| deny (PreToolUse) | exit 0 + JSON `hookSpecificOutput.permissionDecision: "deny"` + reason |
-| allow / ask / defer | same shape with respective value |
-| block (top-level events) | JSON `{"decision":"block","reason":...}` OR `echo reason >&2; exit 2` (user picks style; default JSON) |
-| stopAll | `{"continue": false, "stopReason": ...}` |
-| updatedInput / updatedToolOutput / additionalContext / systemMessage / suppressOutput | merged into the JSON object |
+| deny/allow/ask/block (PreToolUse) | exit 0 + `{ hookSpecificOutput: { hookEventName, permissionDecision: "allow\|deny\|ask", permissionDecisionReason, updatedInput? } }`. `block` maps to `deny`. |
+| PermissionRequest | `{ hookSpecificOutput: { hookEventName, decision: { behavior: "allow\|deny", updatedInput? } } }` |
+| PostToolUse | `{ hookSpecificOutput: { hookEventName, updatedToolOutput?, additionalContext? } }` |
+| block (other top-level events) | `{ "decision": "block", "reason": ... }` OR `echo reason >&2; exit 2` (user picks style; default JSON) |
+| stopAll | `{ "continue": false, "stopReason": ... }` |
+| additionalContext | nests under `hookSpecificOutput` for SessionStart / UserPromptSubmit / UserPromptExpansion / PostToolUse / Stop / SubagentStop; top-level for the other top-level-decision events |
+| systemMessage / suppressOutput | universal top-level fields |
+| updatedInput / updatedToolOutput | nested under `hookSpecificOutput` (PreToolUse.updatedInput, PostToolUse.updatedToolOutput, PermissionRequest.decision.updatedInput) |
+
+`--argjson` binds object-valued fields (updatedInput / updatedToolOutput); `--arg` binds string values. All user strings reach `jq` as `--arg`/`--argjson` bindings, never interpolated into the program text.
 
 ### Blockability table (validation source of truth)
 

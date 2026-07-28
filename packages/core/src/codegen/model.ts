@@ -143,8 +143,9 @@ export function hookChains(graph: WorkflowGraph): HookChain[] {
     emitFrom(t.data.event, t.data.matcher, t.data.scope, t.id);
   }
   for (const t of nodesOfKind(graph, 'trigger.sessionStart')) {
-    // The dedicated sessionStart node always fires SessionStart; project scope.
-    emitFrom('SessionStart', undefined, 'project', t.id);
+    // The dedicated sessionStart node always fires SessionStart; its matcher
+    // (startup|resume|clear|compact|fork) filters which sub-events trigger it.
+    emitFrom('SessionStart', t.data.matcher, 'project', t.id);
   }
   return chains;
 }

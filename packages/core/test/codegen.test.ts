@@ -171,6 +171,15 @@ describe('decision modes → script tails', () => {
     expect(findFile(files, '.sh')!.content).toContain('continue: false');
   });
 
+  it('ask on PreToolUse → permissionDecision ask', () => {
+    const files = generate(
+      scriptFor(n.hookEvent('t1', { event: 'PreToolUse', matcher: 'Bash', scope: 'project' }), {
+        mode: 'ask', reason: 'confirm', blockStyle: 'json',
+      }),
+    );
+    expect(findFile(files, '.sh')!.content).toContain('permissionDecision: "ask"');
+  });
+
   it('additionalContext + systemMessage merged into JSON', () => {
     const files = generate(
       scriptFor(n.hookEvent('t1', { event: 'PreToolUse', matcher: 'Bash', scope: 'project' }), {

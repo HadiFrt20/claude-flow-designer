@@ -8,7 +8,7 @@ import { serializeGraph } from '../schema/graph.js';
 import { commandUnits, subagentUnits } from './model.js';
 import { emitSkill } from './skill.js';
 import { emitAgent } from './agent.js';
-import { buildHooks, emitSettings, emitRunScript } from './settings.js';
+import { buildHooks, emitSettings, emitLocalSettings, emitRunScript } from './settings.js';
 import { emitPluginBundle } from './plugin.js';
 import { selfLint } from './self-lint.js';
 
@@ -54,13 +54,15 @@ export function generate(graph: WorkflowGraph, opts: GenerateOptions = {}): Gene
   const hooks = buildHooks(graph);
   files.push(...hooks.scripts);
   files.push(...emitSettings(graph, hooks.block));
+  files.push(...emitLocalSettings(hooks.localBlock));
   files.push(...emitRunScript(graph));
 
   if (includeGraphFile) {
     files.push({ path: 'flow.clauflow.json', content: serializeGraph(graph) });
   }
 
-  const result = target === 'plugin' ? emitPluginBundle(graph, files, hooks.block) : files;
+  const result =
+    target === 'plugin' ? emitPluginBundle(graph, files, hooks.block, hooks.localBlock) : files;
 
   // 4. self-lint (throws on any malformed artifact) + deterministic ordering.
   const ordered = sortFiles(result);

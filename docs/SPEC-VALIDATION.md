@@ -62,7 +62,7 @@ review blocker (see SPEC-REVIEW.md).
 | CF112 | warn | mcp_tool hook on SessionStart/Setup (server likely not connected yet) | — |
 | CF113 | error | PermissionDenied hook using exit 2 (ignored) instead of JSON `retry` | convert |
 | CF114 | warn | Hook relies on exit code 1 to block (only 2 blocks; 1 = non-blocking) | change to exit 2 |
-| CF115 | error | Generated script missing `jq` guard or stdin read (codegen invariant; asserted in tests) | regenerate |
+| CF115 | error | `hook.command.scriptBody` is a full script (leading `#!`) instead of inner logic — codegen owns the shebang + jq guard + stdin read, so a pasted full script bypasses them | strip the shebang/header |
 
 ### Skills / commands (CF2xx)
 | ID | Sev | Rule | Quick fix |

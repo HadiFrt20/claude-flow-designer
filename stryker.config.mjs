@@ -12,6 +12,7 @@ export default {
   mutate: [
     'packages/core/src/validate.ts',
     'packages/core/src/codegen/**/*.ts',
+    'packages/core/src/importer.ts',
   ],
   thresholds: { high: 90, low: 80, break: 80 },
   vitest: { configFile: 'vitest.config.ts' },

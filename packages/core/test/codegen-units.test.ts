@@ -157,12 +157,66 @@ describe('emitSkill body composition', () => {
 // emitHookScript — every decision mode, exact tails.
 // ---------------------------------------------------------------------------
 describe('emitHookScript decision tails', () => {
-  it('PreToolUse deny → hookSpecificOutput with permissionDecision deny, reason inside', () => {
+  const jqLine = (s: string) => s.split('\n').find((l) => l.startsWith('jq -n')) ?? '';
+
+  it('PreToolUse deny → hookSpecificOutput.permissionDecision deny, reason nested', () => {
     const s = emitHookScript({ event: 'PreToolUse', body: 'x=1', decision: { mode: 'deny', reason: 'no', blockStyle: 'json' } });
-    expect(s).toContain(
+    expect(jqLine(s)).toBe(
       `jq -n --arg reason 'no' '{ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $reason } }'`,
     );
     expect(s).not.toContain('decision: "block"');
+  });
+
+  it('PreToolUse ask → permissionDecision ask', () => {
+    expect(jqLine(emitHookScript({ event: 'PreToolUse', decision: { mode: 'ask', blockStyle: 'json' } }))).toContain(
+      'permissionDecision: "ask"',
+    );
+  });
+
+  it('PreToolUse block maps to permissionDecision deny (not top-level decision)', () => {
+    const s = emitHookScript({ event: 'PreToolUse', decision: { mode: 'block', blockStyle: 'json' } });
+    expect(jqLine(s)).toContain('permissionDecision: "deny"');
+    expect(s).not.toContain('"decision": "block"');
+  });
+
+  it('PreToolUse updatedInput → nested via --argjson', () => {
+    const s = emitHookScript({ event: 'PreToolUse', decision: { mode: 'allow', updatedInput: { a: 1 }, blockStyle: 'json' } });
+    expect(jqLine(s)).toBe(
+      `jq -n --argjson uinput '{"a":1}' '{ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow", updatedInput: $uinput } }'`,
+    );
+  });
+
+  it('PermissionRequest → hookSpecificOutput.decision.behavior (+updatedInput)', () => {
+    const s = emitHookScript({ event: 'PermissionRequest', decision: { mode: 'allow', updatedInput: { command: 'npm run lint' }, blockStyle: 'json' } });
+    expect(jqLine(s)).toBe(
+      `jq -n --argjson uinput '{"command":"npm run lint"}' '{ hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "allow", updatedInput: $uinput } } }'`,
+    );
+  });
+
+  it('PermissionRequest deny behavior', () => {
+    expect(jqLine(emitHookScript({ event: 'PermissionRequest', decision: { mode: 'deny', blockStyle: 'json' } }))).toContain(
+      'decision: { behavior: "deny" }',
+    );
+  });
+
+  it('PostToolUse → updatedToolOutput + additionalContext nested', () => {
+    const s = emitHookScript({ event: 'PostToolUse', decision: { mode: 'allow', updatedToolOutput: { x: 1 }, additionalContext: 'note', blockStyle: 'json' } });
+    expect(jqLine(s)).toBe(
+      `jq -n --argjson utoutput '{"x":1}' --arg actx 'note' '{ hookSpecificOutput: { hookEventName: "PostToolUse", updatedToolOutput: $utoutput, additionalContext: $actx } }'`,
+    );
+  });
+
+  it('SessionStart additionalContext nests under hookSpecificOutput (not top-level)', () => {
+    const s = emitHookScript({ event: 'SessionStart', decision: { mode: 'allow', additionalContext: 'ctx', blockStyle: 'json' } });
+    expect(jqLine(s)).toBe(
+      `jq -n --arg actx 'ctx' '{ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: $actx } }'`,
+    );
+  });
+
+  it('Stop/SubagentStop additionalContext nests under hookSpecificOutput', () => {
+    expect(jqLine(emitHookScript({ event: 'Stop', decision: { mode: 'allow', additionalContext: 'go on', blockStyle: 'json' } }))).toBe(
+      `jq -n --arg actx 'go on' '{ hookSpecificOutput: { hookEventName: "Stop", additionalContext: $actx } }'`,
+    );
   });
 
   it('Stop block via exit2 → reason to stderr + exit 2, no jq', () => {
@@ -172,24 +226,30 @@ describe('emitHookScript decision tails', () => {
     expect(s).not.toContain('jq -n');
   });
 
-  it('Stop block via json → decision:block JSON', () => {
+  it('Stop block via json → top-level decision:block JSON', () => {
     const s = emitHookScript({ event: 'Stop', decision: { mode: 'block', reason: 'halt', blockStyle: 'json' } });
-    expect(s).toContain(`jq -n --arg reason 'halt' '{ decision: "block", reason: $reason }'`);
+    expect(jqLine(s)).toBe(`jq -n --arg reason 'halt' '{ decision: "block", reason: $reason }'`);
   });
 
-  it('stopAll → continue:false with stopReason', () => {
+  it('UserPromptSubmit additionalContext nests; block stays top-level', () => {
+    const ctx = emitHookScript({ event: 'UserPromptSubmit', decision: { mode: 'allow', additionalContext: 'c', blockStyle: 'json' } });
+    expect(jqLine(ctx)).toContain('hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: $actx }');
+  });
+
+  it('stopAll → top-level continue:false with stopReason', () => {
     const s = emitHookScript({ event: 'Stop', decision: { mode: 'stopAll', reason: 'done', blockStyle: 'json' } });
-    expect(s).toContain(`jq -n --arg reason 'done' '{ continue: false, stopReason: $reason }'`);
+    expect(jqLine(s)).toBe(`jq -n --arg reason 'done' '{ continue: false, stopReason: $reason }'`);
   });
 
-  it('merges additionalContext/systemMessage/suppressOutput', () => {
+  it('systemMessage/suppressOutput are universal top-level; additionalContext nests for PostToolUse', () => {
     const s = emitHookScript({
       event: 'PostToolUse',
       decision: { mode: 'allow', additionalContext: 'ctx', systemMessage: 'sys', suppressOutput: true, blockStyle: 'json' },
     });
-    expect(s).toContain('additionalContext: $actx');
-    expect(s).toContain('systemMessage: $sysmsg');
-    expect(s).toContain('suppressOutput: true');
+    const jq = jqLine(s);
+    expect(jq).toContain('systemMessage: $sysmsg');
+    expect(jq).toContain('suppressOutput: true');
+    expect(jq).toContain('hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: $actx }');
   });
 
   it('adds SC2034 suppression only when the body does not reference input', () => {
@@ -246,6 +306,15 @@ describe('plugin bundle', () => {
     const sh = files.find((f) => f.path.endsWith('.sh'))!;
     expect(sh.path).toBe('security-gate/hooks/pretooluse-1.sh');
     expect(sh.executable).toBe(true);
+  });
+
+  it('rewrites hook command to ${CLAUDE_PLUGIN_ROOT}/hooks/… (not CLAUDE_PROJECT_DIR)', () => {
+    const files = generate(TEMPLATES.find((t) => t.slug === 'security-gate')!.graph, { target: 'plugin' });
+    const hooks = JSON.parse(find(files, 'hooks/hooks.json').content);
+    const cmd = hooks.hooks.PreToolUse[0].hooks[0].command;
+    expect(cmd).toBe('${CLAUDE_PLUGIN_ROOT}/hooks/pretooluse-1.sh');
+    expect(cmd).not.toContain('CLAUDE_PROJECT_DIR');
+    expect(cmd).not.toContain('.claude/');
   });
 
   it('plugin.json description falls back to meta.name when description is absent', () => {
@@ -421,5 +490,52 @@ describe('hooks block grouping', () => {
     expect(hooks).toHaveLength(1);
     expect(hooks[0].hooks).toHaveLength(2);
     expect(hooks[0].matcher).toBe('Bash');
+  });
+});
+
+describe('hook scope routing → settings.json vs settings.local.json', () => {
+  const twoScopes = () =>
+    generate(
+      g(
+        [
+          baseCmd(),
+          n.hookEvent('tp', { event: 'PreToolUse', matcher: 'Bash', scope: 'project' }),
+          n.command('hp', { command: 'proj' }),
+          n.hookEvent('tl', { event: 'PostToolUse', matcher: 'Edit', scope: 'local' }),
+          n.command('hl', { command: 'local-only' }),
+        ],
+        [e('tp', 'hp'), e('tl', 'hl')],
+      ),
+    );
+
+  it('project-scoped hook → settings.json', () => {
+    const s = JSON.parse(find(twoScopes(), 'settings.json').content);
+    expect(s.hooks.PreToolUse).toBeDefined();
+    expect(s.hooks.PostToolUse).toBeUndefined();
+  });
+
+  it('local-scoped hook → settings.local.json only', () => {
+    const files = twoScopes();
+    const local = JSON.parse(find(files, 'settings.local.json').content);
+    expect(local.hooks.PostToolUse[0].hooks[0].command).toBe('local-only');
+    expect(local.hooks.PreToolUse).toBeUndefined();
+  });
+
+  it('no settings.local.json when no local-scoped hooks exist', () => {
+    const files = generate(
+      g([baseCmd(), n.hookEvent('t', { event: 'PreToolUse', matcher: 'Bash', scope: 'project' }), n.command('h', { command: 'x' })], [e('t', 'h')]),
+    );
+    expect(files.some((f) => f.path.endsWith('settings.local.json'))).toBe(false);
+  });
+});
+
+describe('sessionStart trigger matcher', () => {
+  it('passes the matcher (startup/resume/…) through to the SessionStart entry', () => {
+    const graph = g(
+      [baseCmd(), n.sessionStart('t', { matcher: 'resume' }), n.command('h', { command: 'x' })],
+      [e('t', 'h')],
+    );
+    const entry = JSON.parse(find(generate(graph), 'settings.json').content).hooks.SessionStart[0];
+    expect(entry.matcher).toBe('resume');
   });
 });

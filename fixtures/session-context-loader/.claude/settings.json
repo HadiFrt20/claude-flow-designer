@@ -8,7 +8,8 @@
             "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/sessionstart-1.sh",
             "type": "command"
           }
-        ]
+        ],
+        "matcher": "startup"
       }
     ]
   }

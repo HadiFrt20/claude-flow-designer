@@ -9,5 +9,5 @@ input=$(cat)
 
 ctx=$(git -C "$CLAUDE_PROJECT_DIR" status --short 2>/dev/null || echo "no git")
 printf '%s' "$ctx" > /tmp/clauflow-ctx.txt
-jq -n --arg actx 'Repo status loaded at session start.' '{ additionalContext: $actx }'
+jq -n --arg actx 'Repo status loaded at session start.' '{ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: $actx } }'
 exit 0

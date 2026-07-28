@@ -1,18 +1,21 @@
 // Generated hook .sh scripts. Conventions (SPEC-CODEGEN "Generated script
 // conventions"): #!/bin/bash, set -euo pipefail, jq guard first, read stdin once,
-// decision tail per the blockability table. Output MUST pass shellcheck.
+// decision tail per the blockability table. JSON output shapes follow the per-event
+// hookSpecificOutput contract (docs/REFERENCE-CLAUDE-CODE.md; verified against
+// code.claude.com/docs/en/hooks). Output MUST pass shellcheck.
 import { BLOCKABLE_EVENTS } from '../schema/types.js';
 import type { HookEvent } from '../schema/types.js';
 import type { DecisionData } from '../schema/nodes.js';
 
 const GUARD = 'command -v jq >/dev/null || { echo "jq required" >&2; exit 1; }';
 
-/** hookSpecificOutput.permissionDecision value for a PreToolUse-style decision. */
-function permissionDecision(mode: DecisionData['mode']): string | undefined {
+/** permissionDecision value (PreToolUse). `block` maps to `deny`. */
+function permissionDecision(mode: DecisionData['mode']): 'allow' | 'deny' | 'ask' | undefined {
   switch (mode) {
     case 'allow':
       return 'allow';
     case 'deny':
+    case 'block':
       return 'deny';
     case 'ask':
       return 'ask';
@@ -21,43 +24,78 @@ function permissionDecision(mode: DecisionData['mode']): string | undefined {
   }
 }
 
+// Events whose additionalContext nests under hookSpecificOutput.
+const ADDL_CONTEXT_NESTED: ReadonlySet<HookEvent> = new Set<HookEvent>([
+  'SessionStart', 'UserPromptSubmit', 'UserPromptExpansion',
+  'PostToolUse', 'Stop', 'SubagentStop',
+]);
+
 /**
- * Build the JSON object a decision emits (universal + event-specific fields),
- * as a jq object literal string. Returns null when the decision is a bare
- * exit-2 block (no JSON body).
+ * Build the JSON object a decision emits, as a jq object-literal string plus the
+ * `--arg` bindings for its string values. Shapes are event-specific:
+ *  - PreToolUse: hookSpecificOutput{ permissionDecision, permissionDecisionReason, updatedInput }
+ *  - PermissionRequest: hookSpecificOutput{ decision:{ behavior, updatedInput } }
+ *  - PostToolUse: hookSpecificOutput{ updatedToolOutput, additionalContext }
+ *  - SessionStart/UserPromptSubmit/UserPromptExpansion: hookSpecificOutput{ additionalContext }
+ *  - block (top-level events): top-level decision:"block" + reason
+ *  - stopAll: top-level continue:false + stopReason
+ * systemMessage/suppressOutput are universal top-level fields.
  */
 function decisionJsonArgs(event: HookEvent, dec: DecisionData): { args: string[]; obj: string } {
-  // args are emitted as: --arg <field> '<quoted-value>' — only the value is quoted.
   const args: string[] = [];
-  const parts: string[] = [];
-  const addStr = (key: string, jqField: string, value: string) => {
+  const top: string[] = []; // top-level object fields
+  const hso: string[] = [`hookEventName: "${event}"`]; // hookSpecificOutput fields
+  let usesHso = false;
+
+  const bindStr = (value: string, jqField: string): string => {
     args.push(`--arg ${jqField} ${shSingleQuote(value)}`);
-    parts.push(`${key}: $${jqField}`);
+    return `$${jqField}`;
+  };
+  // Raw jq value (object literal) via --argjson.
+  const bindJson = (value: unknown, jqField: string): string => {
+    args.push(`--argjson ${jqField} ${shSingleQuote(JSON.stringify(value))}`);
+    return `$${jqField}`;
   };
 
-  if (event === 'PreToolUse' || event === 'PermissionRequest') {
+  if (event === 'PreToolUse') {
+    usesHso = true;
     const pd = permissionDecision(dec.mode);
-    const inner: string[] = [`hookEventName: "${event}"`];
-    if (pd) inner.push(`permissionDecision: "${pd}"`);
-    // reason lives INSIDE hookSpecificOutput for PreToolUse/PermissionRequest.
-    if (dec.reason) {
-      args.push(`--arg reason ${shSingleQuote(dec.reason)}`);
-      inner.push('permissionDecisionReason: $reason');
+    if (pd) hso.push(`permissionDecision: "${pd}"`);
+    if (dec.reason) hso.push(`permissionDecisionReason: ${bindStr(dec.reason, 'reason')}`);
+    if (dec.updatedInput) hso.push(`updatedInput: ${bindJson(dec.updatedInput, 'uinput')}`);
+  } else if (event === 'PermissionRequest') {
+    usesHso = true;
+    const behavior = dec.mode === 'allow' ? 'allow' : 'deny';
+    const decisionInner = [`behavior: "${behavior}"`];
+    if (dec.updatedInput) decisionInner.push(`updatedInput: ${bindJson(dec.updatedInput, 'uinput')}`);
+    hso.push(`decision: { ${decisionInner.join(', ')} }`);
+  } else if (event === 'PostToolUse') {
+    usesHso = true;
+    if (dec.updatedToolOutput) {
+      hso.push(`updatedToolOutput: ${bindJson(dec.updatedToolOutput, 'utoutput')}`);
     }
-    parts.push(`hookSpecificOutput: { ${inner.join(', ')} }`);
   } else if (dec.mode === 'block') {
-    parts.push('decision: "block"');
-    if (dec.reason) addStr('reason', 'reason', dec.reason);
+    top.push('decision: "block"');
+    if (dec.reason) top.push(`reason: ${bindStr(dec.reason, 'reason')}`);
   } else if (dec.mode === 'stopAll') {
-    parts.push('continue: false');
-    if (dec.reason) addStr('stopReason', 'reason', dec.reason);
+    top.push('continue: false');
+    if (dec.reason) top.push(`stopReason: ${bindStr(dec.reason, 'reason')}`);
   }
 
-  if (dec.additionalContext) addStr('additionalContext', 'actx', dec.additionalContext);
-  if (dec.systemMessage) addStr('systemMessage', 'sysmsg', dec.systemMessage);
-  if (dec.suppressOutput) parts.push('suppressOutput: true');
+  if (dec.additionalContext) {
+    if (ADDL_CONTEXT_NESTED.has(event)) {
+      usesHso = true;
+      hso.push(`additionalContext: ${bindStr(dec.additionalContext, 'actx')}`);
+    } else {
+      top.push(`additionalContext: ${bindStr(dec.additionalContext, 'actx')}`);
+    }
+  }
+  // Universal top-level fields (all events).
+  if (dec.systemMessage) top.push(`systemMessage: ${bindStr(dec.systemMessage, 'sysmsg')}`);
+  if (dec.suppressOutput) top.push('suppressOutput: true');
 
-  return { args, obj: `{ ${parts.join(', ')} }` };
+  if (usesHso) top.push(`hookSpecificOutput: { ${hso.join(', ')} }`);
+  return { args, obj: `{ ${top.join(', ')} }` };
 }
 
 export interface ScriptSpec {
