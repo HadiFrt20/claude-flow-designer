@@ -27,8 +27,8 @@
 - [x] Problems panel fed by core validation.
 
 ## M3 — Web host
-- [ ] Vite app, HostBridge via File System Access API + JSZip fallback.
-- [ ] Template gallery: PR review, smart commit, test-fix loop, security gate (PreToolUse
+- [x] Vite app, HostBridge via File System Access API + JSZip fallback.
+- [x] Template gallery: PR review, smart commit, test-fix loop, security gate (PreToolUse
       deny rm -rf), session-context loader.
 
 ## M4 — VS Code extension
