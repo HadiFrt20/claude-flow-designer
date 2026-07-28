@@ -21,10 +21,10 @@
 - [x] Mutation testing (Stryker) on validate.ts + codegen ≥ 80% before starting M2.
 
 ## M2 — Canvas
-- [ ] React Flow canvas: palette, drag/drop, edges, minimap, undo/redo.
-- [ ] Property panels per node kind, Basic/Advanced grouping, inline validation badges.
-- [ ] Live preview pane: generated files update on every edit (dryRun through HostBridge).
-- [ ] Problems panel fed by core validation.
+- [x] React Flow canvas: palette, drag/drop, edges, minimap, undo/redo.
+- [x] Property panels per node kind, Basic/Advanced grouping, inline validation badges.
+- [x] Live preview pane: generated files update on every edit (dryRun through HostBridge).
+- [x] Problems panel fed by core validation.
 
 ## M3 — Web host
 - [ ] Vite app, HostBridge via File System Access API + JSZip fallback.
