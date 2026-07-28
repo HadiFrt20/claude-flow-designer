@@ -13,20 +13,26 @@ jobs:
       # platform-specific optional binaries (@esbuild/*, @rollup/*) — the install
       # is fast and reliable locally, so this is registry/runner network flakiness,
       # not a lockfile issue. Retry a fresh attempt (a new attempt usually gets a
-      # healthy connection); each attempt is hard-capped so a stall fails fast.
-      # .npmrc supplies fetch timeouts/retries within an attempt.
+      # healthy connection); each attempt is hard-capped with SIGTERM AND a
+      # --kill-after SIGKILL, because a wedged npm ignores SIGTERM (that was why an
+      # earlier `timeout 300` loop hung for the whole job). On the final failure we
+      # dump the npm debug log so a genuine stall is diagnosable, not guessed at.
       - name: Install (npm ci)
+        timeout-minutes: 20
         run: |
+          set +e
           for attempt in 1 2 3; do
             echo "::group::npm ci (attempt $attempt)"
-            if timeout 300 npm ci --no-audit --no-fund; then
-              echo "::endgroup::"; exit 0
-            fi
+            timeout --kill-after=30 240 npm ci --no-audit --no-fund --loglevel=http
+            code=$?
             echo "::endgroup::"
-            echo "npm ci attempt $attempt failed/stalled; clearing partial state and retrying"
-            npm cache verify || true
+            if [ "$code" -eq 0 ]; then exit 0; fi
+            echo "npm ci attempt $attempt exited $code (124/137 = timeout/kill); retrying fresh"
             rm -rf node_modules
           done
+          echo "::group::npm debug log (last 120 lines)"
+          tail -n 120 "$HOME"/.npm/_logs/*-debug-0.log 2>/dev/null || echo "(no debug log found)"
+          echo "::endgroup::"
           echo "::error::npm ci failed after 3 attempts"; exit 1
       - name: Lint & typecheck
         run: npm run lint && npm run typecheck
