@@ -6,10 +6,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        # Node 22 (LTS): transitive deps of @vscode/vsce (@azure/*, @typespec/*)
-        # require node >=22; on Node 20's npm 10.8.2 `npm ci` crashes with
-        # "Exit handler never called!" and leaves node_modules half-installed.
-        with: { node-version: 22, cache: npm }
+        # Node 24 (ships npm 11.x) matches the local/dev toolchain. On Node 20/22
+        # (npm 10.x) `npm ci` hangs ~8 min then dies with "Exit handler never
+        # called!" (npm 10.x CLI bug, fixed in 11.x), leaving node_modules half-
+        # installed — which then surfaced downstream as `eslint: not found`.
+        with: { node-version: 24, cache: npm }
       - run: sudo apt-get update && sudo apt-get install -y shellcheck jq
       - run: npm ci
       - name: Lint & typecheck
