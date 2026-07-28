@@ -9,14 +9,25 @@ jobs:
         # Node 24 (ships npm 11.x) matches the local/dev toolchain.
         with: { node-version: 24 }
       - run: sudo apt-get update && sudo apt-get install -y shellcheck jq
-      # `npm ci` was hanging for the full runner timeout then dying with npm's
-      # "Exit handler never called!" — a stalled registry fetch on the large
-      # dependency tree. .npmrc adds fetch timeout+retries; we also drop the
-      # actions/setup-node npm cache (a racy/partial cache restore is a known
-      # trigger) and hard-cap the step so a hang fails fast instead of eating CI.
+      # `npm ci` intermittently stalls on the runner while fetching one of the 75
+      # platform-specific optional binaries (@esbuild/*, @rollup/*) — the install
+      # is fast and reliable locally, so this is registry/runner network flakiness,
+      # not a lockfile issue. Retry a fresh attempt (a new attempt usually gets a
+      # healthy connection); each attempt is hard-capped so a stall fails fast.
+      # .npmrc supplies fetch timeouts/retries within an attempt.
       - name: Install (npm ci)
-        timeout-minutes: 10
-        run: npm ci --no-audit --no-fund
+        run: |
+          for attempt in 1 2 3; do
+            echo "::group::npm ci (attempt $attempt)"
+            if timeout 300 npm ci --no-audit --no-fund; then
+              echo "::endgroup::"; exit 0
+            fi
+            echo "::endgroup::"
+            echo "npm ci attempt $attempt failed/stalled; clearing partial state and retrying"
+            npm cache verify || true
+            rm -rf node_modules
+          done
+          echo "::error::npm ci failed after 3 attempts"; exit 1
       - name: Lint & typecheck
         run: npm run lint && npm run typecheck
       - name: Build (all packages; emits dist/cli.js)
