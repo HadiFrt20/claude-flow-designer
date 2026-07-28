@@ -8,44 +8,17 @@ import {
   nodesOfKind,
   reachableFromTriggers,
 } from '../schema/graph-utils.js';
+import { edgeAllowed } from '../schema/edges.js';
 import { addNode, freshId, mapNode, removeNode } from './quickfix-utils.js';
 import { DOCS_URLS } from './helpers.js';
 
 const BUNDLED_SKILLS = new Set(['code-review', 'verify', 'review', 'security-review']);
 
-// Kinds allowed as the target of an edge from a given source kind. This is a
-// coarse compatibility table (CF005): the important negative cases are wiring a
-// hook handler into a slash command, or an output.decision into a trigger.
+// Edge compatibility (CF005) lives in schema/edges.ts — the single source of
+// truth shared with the canvas so drag-connect rejection matches validation.
 const STEP_KINDS: ReadonlySet<NodeKind> = new Set([
   'step.prompt', 'step.shell', 'step.fileRef', 'step.subagent', 'step.mcpTool',
 ]);
-const HOOK_HANDLER_KINDS: ReadonlySet<NodeKind> = new Set([
-  'hook.command', 'hook.http', 'hook.prompt', 'hook.agent', 'step.mcpTool',
-]);
-
-function edgeAllowed(source: NodeKind, target: NodeKind): boolean {
-  switch (source) {
-    case 'trigger.slashCommand':
-      // A command composes steps (and may delegate to a subagent).
-      return STEP_KINDS.has(target);
-    case 'trigger.hookEvent':
-    case 'trigger.sessionStart':
-      // A hook-event trigger feeds a gate or a handler.
-      return target === 'gate.condition' || HOOK_HANDLER_KINDS.has(target);
-    case 'gate.condition':
-      return HOOK_HANDLER_KINDS.has(target);
-    case 'hook.command':
-    case 'hook.http':
-    case 'hook.prompt':
-    case 'hook.agent':
-      return target === 'output.decision';
-    case 'trigger.headless':
-      return STEP_KINDS.has(target) || target === 'step.prompt';
-    default:
-      // steps → steps or a decision; keep permissive to avoid false positives.
-      return STEP_KINDS.has(target) || target === 'output.decision';
-  }
-}
 
 const cf001: Rule = {
   id: 'CF001',

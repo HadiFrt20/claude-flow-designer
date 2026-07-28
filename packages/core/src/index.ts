@@ -2,6 +2,7 @@ export * from './schema/types.js';
 export * from './schema/nodes.js';
 export * from './schema/graph.js';
 export * from './schema/graph-utils.js';
+export * from './schema/edges.js';
 export * from './diagnostics.js';
 export * from './validate.js';
 export { generate, ExportGateError, SelfLintError } from './codegen/index.js';
