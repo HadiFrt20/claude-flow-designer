@@ -56,5 +56,5 @@ jobs:
         run: |
           find . -name '*.clauflow.json' -not -path './node_modules/*' -print0 \
             | xargs -0 -r -n1 node packages/core/dist/cli.js validate || echo "cli lands in M1"
-      - name: Extension package dry-run
-        run: npm run -s package:vscode -- --no-git-tag-version || echo "vsce dry-run lands in M4"
+      - name: Extension package (.vsix)
+        run: npm run -s package:vscode
