@@ -6,7 +6,14 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     include: ['packages/**/test/**/*.test.{ts,tsx}'],
-    environmentMatchGlobs: [['packages/canvas/**', 'jsdom']],
+    // canvas + web tests need a DOM; core stays on node (faster; Stryker scope).
+    environmentMatchGlobs: [
+      ['packages/canvas/**', 'jsdom'],
+      ['packages/web/**', 'jsdom'],
+    ],
+    // Global setup only carries canvas's RTL/jsdom polyfills. Web tests import
+    // fake-indexeddb themselves (see packages/web/test/setup.ts) so the node-only
+    // core suite never loads DOM shims.
     setupFiles: ['./packages/canvas/test/setup.ts'],
   },
 });
