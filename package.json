@@ -16,7 +16,7 @@
     "package:vscode": "npm run package -w clauflow-vscode",
     "lint": "eslint packages",
     "gate": "npm run -s typecheck && npm run -s test",
-    "typecheck": "tsc -b packages/core packages/canvas packages/vscode",
+    "typecheck": "tsc -b packages/core packages/canvas packages/web packages/vscode",
     "fixtures:regen": "npm run -s build -w @clauflow/core && node packages/core/scripts/regen-fixtures.mjs",
     "mutation": "stryker run"
   },
@@ -31,6 +31,7 @@
     "@types/node": "^20.19.43",
     "@types/react": "^18.3.31",
     "@types/react-dom": "^18.3.7",
+    "@types/wicg-file-system-access": "^2023.10.7",
     "eslint": "^9.0.0",
     "fake-indexeddb": "^6.2.5",
     "jsdom": "^25.0.1",

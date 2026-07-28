@@ -4,7 +4,7 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['**/dist/**', '**/node_modules/**', '**/*.vsix'],
+    ignores: ['**/dist/**', '**/dist-tsc/**', '**/node_modules/**', '**/*.vsix'],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
@@ -14,7 +14,13 @@ export default tseslint.config(
     languageOptions: { globals: globals.node },
   },
   {
+    // Config files (vite/vitest/etc.) require a default export by contract.
+    files: ['**/*.config.{ts,js,mjs}'],
+    rules: { 'no-restricted-syntax': 'off' },
+  },
+  {
     files: ['packages/**/*.{ts,tsx}'],
+    ignores: ['**/*.config.{ts,js,mjs}'],
     rules: {
       // No default exports — enforced by CLAUDE.md hard rules.
       'no-restricted-syntax': [
