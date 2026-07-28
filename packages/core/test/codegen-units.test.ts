@@ -117,6 +117,27 @@ describe('emitSkill body composition', () => {
     expect(find(files, 'SKILL.md').content).toContain('Use the helper subagent to do the thing.');
   });
 
+  it('falls back to bare Bash when a shell command has no token', () => {
+    const files = generate(g([baseCmd(), n.shell('s', { command: '   ', embedOutput: true })], [e('c1', 's')]));
+    expect(find(files, 'SKILL.md').content).toContain('allowed-tools: Bash');
+  });
+
+  it('adds an mcp__server__tool entry to allowed-tools for an mcpTool step', () => {
+    const files = generate(g([baseCmd(), n.mcpTool('m', { server: 'gh', tool: 'list' })], [e('c1', 'm')]));
+    expect(find(files, 'SKILL.md').content).toContain('allowed-tools: mcp__gh__list');
+  });
+
+  it('uses a default phrase when a mid-flow subagent has no description', () => {
+    // Call emitSkill directly: a description-less subagent trips CF302/CF006 at the
+    // gate, but the emitter's fallback phrase is what we're pinning here.
+    const unit = {
+      id: 'c1',
+      data: { name: 'deleg', description: 'delegates onward' },
+      steps: [{ id: 's', kind: 'step.subagent', label: 's', position: { x: 0, y: 0 }, data: { name: 'helper', systemPrompt: 'x' } }],
+    } as const;
+    expect(emitSkill(unit as never).content).toContain('Use the helper subagent to handle this step.');
+  });
+
   it('unions and sorts allowed-tools across steps', () => {
     const unit = {
       id: 'c1',
@@ -212,6 +233,26 @@ describe('plugin bundle', () => {
     const hooks = JSON.parse(find(files, 'hooks/hooks.json').content);
     expect(hooks.hooks.PreToolUse).toBeDefined();
   });
+
+  it('re-roots a nested skill path under the slug, stripping the .claude/ prefix', () => {
+    const files = generate(TEMPLATES.find((t) => t.slug === 'pr-review')!.graph, { target: 'plugin' });
+    // .claude/skills/pr-review/SKILL.md → pr-review/skills/pr-review/SKILL.md
+    expect(files.map((f) => f.path)).toContain('pr-review/skills/pr-review/SKILL.md');
+    expect(files.some((f) => f.path.includes('.claude/'))).toBe(false);
+  });
+
+  it('keeps the hook .sh executable bit and re-roots it', () => {
+    const files = generate(TEMPLATES.find((t) => t.slug === 'security-gate')!.graph, { target: 'plugin' });
+    const sh = files.find((f) => f.path.endsWith('.sh'))!;
+    expect(sh.path).toBe('security-gate/hooks/pretooluse-1.sh');
+    expect(sh.executable).toBe(true);
+  });
+
+  it('plugin.json description falls back to meta.name when description is absent', () => {
+    const graph = g([baseCmd()], [], {}, { name: 'No Desc', slug: 'no-desc' });
+    const manifest = JSON.parse(find(generate(graph, { target: 'plugin' }), 'plugin.json').content);
+    expect(manifest.description).toBe('No Desc');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -230,3 +271,155 @@ describe('generate options', () => {
 function baseGraph() {
   return g([baseCmd(), n.prompt('p', { body: 'hi' })], [e('c1', 'p')]);
 }
+
+describe('ExportGateError message + file ordering', () => {
+  it('names the blocking rule ids and count in the message', () => {
+    // CF001 (no trigger) blocks.
+    try {
+      generate(g([n.prompt('p', { body: 'x' })]));
+      throw new Error('should have thrown');
+    } catch (err) {
+      const msg = (err as Error).message;
+      expect(msg).toContain('1 blocking diagnostic');
+      expect(msg).toContain('CF001');
+    }
+  });
+
+  it('returns files sorted by path (stable, ascending)', () => {
+    const paths = generate(baseGraph()).map((f) => f.path);
+    expect(paths).toEqual([...paths].sort());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Optional-field presence/absence — each toggled field asserted both ways so a
+// mutated `if (cond)` → `if (true)` / `if (false)` is caught.
+// ---------------------------------------------------------------------------
+const hookGraph = (handler: ReturnType<typeof n.command>) =>
+  g([baseCmd(), n.hookEvent('t', { event: 'PreToolUse', matcher: 'Bash', scope: 'project' }), handler], [e('t', handler.id)]);
+
+const handlerJson = (files: GeneratedFile[]) =>
+  JSON.parse(find(files, 'settings.json').content).hooks.PreToolUse[0].hooks[0];
+
+describe('command handler optional fields (present vs absent)', () => {
+  it('args: present emits, absent omits', () => {
+    expect(handlerJson(generate(hookGraph(n.command('h', { command: 'x', args: ['--flag'] }))))).toHaveProperty('args', ['--flag']);
+    expect(handlerJson(generate(hookGraph(n.command('h', { command: 'x' }))))).not.toHaveProperty('args');
+  });
+  it('shell: present emits, absent omits', () => {
+    expect(handlerJson(generate(hookGraph(n.command('h', { command: 'x', shell: 'powershell' }))))).toHaveProperty('shell', 'powershell');
+    expect(handlerJson(generate(hookGraph(n.command('h', { command: 'x' }))))).not.toHaveProperty('shell');
+  });
+  it('timeout: present emits (incl. 0), absent omits', () => {
+    expect(handlerJson(generate(hookGraph(n.command('h', { command: 'x', timeout: 0 }))))).toHaveProperty('timeout', 0);
+    expect(handlerJson(generate(hookGraph(n.command('h', { command: 'x' }))))).not.toHaveProperty('timeout');
+  });
+  it('statusMessage / async / asyncRewake / if: present vs absent', () => {
+    const full = handlerJson(generate(hookGraph(
+      n.command('h', { command: 'x', statusMessage: 'go', async: true, asyncRewake: true, if: 'Bash(git *)' }),
+    )));
+    expect(full).toMatchObject({ statusMessage: 'go', async: true, asyncRewake: true, if: 'Bash(git *)' });
+    const bare = handlerJson(generate(hookGraph(n.command('h', { command: 'x' }))));
+    for (const k of ['statusMessage', 'async', 'asyncRewake', 'if']) expect(bare).not.toHaveProperty(k);
+  });
+  it('once is never emitted to settings.json (CF107)', () => {
+    // once triggers CF107 (warn); ack it so the gate emits, then assert it is dropped.
+    const graph = hookGraph(n.command('h', { command: 'x', once: true }));
+    graph.meta.ackedWarnings = ['CF107'];
+    expect(handlerJson(generate(graph))).not.toHaveProperty('once');
+  });
+});
+
+describe('http/prompt/mcp handler optional fields', () => {
+  const settingsFor = (handler: ReturnType<typeof n.http>) => handlerJson(generate(hookGraph(handler as never)));
+  it('http: headers/allowedEnvVars/timeout present vs absent', () => {
+    expect(settingsFor(n.http('h', { url: 'u', headers: { A: '1' }, allowedEnvVars: ['E'], timeout: 5 }))).toMatchObject({
+      type: 'http', url: 'u', headers: { A: '1' }, allowedEnvVars: ['E'], timeout: 5,
+    });
+    const bare = settingsFor(n.http('h', { url: 'u' }));
+    for (const k of ['headers', 'allowedEnvVars', 'timeout']) expect(bare).not.toHaveProperty(k);
+  });
+  it('prompt: model present vs absent', () => {
+    expect(settingsFor(n.promptHandler('h', { prompt: 'p', model: 'opus' }) as never)).toHaveProperty('model', 'opus');
+    expect(settingsFor(n.promptHandler('h', { prompt: 'p' }) as never)).not.toHaveProperty('model');
+  });
+  it('mcp_tool: input present vs absent', () => {
+    expect(settingsFor(n.mcpTool('h', { server: 's', tool: 't', input: { a: 1 } }) as never)).toHaveProperty('input', { a: 1 });
+    expect(settingsFor(n.mcpTool('h', { server: 's', tool: 't' }) as never)).not.toHaveProperty('input');
+  });
+});
+
+describe('settings.json field mapping (present vs absent, exact)', () => {
+  const settings = (over: Parameters<typeof g>[2]) => {
+    const files = generate(g([baseCmd()], [], over));
+    const f = files.find((x) => x.path.endsWith('settings.json'));
+    return f ? JSON.parse(f.content) : {};
+  };
+  it('outputStyle', () => {
+    expect(settings({ outputStyle: 'terse' }).outputStyle).toBe('terse');
+    expect(settings({}).outputStyle).toBeUndefined();
+  });
+  it('disableAllHooks only when true', () => {
+    expect(settings({ disableAllHooks: true }).disableAllHooks).toBe(true);
+    expect(settings({ disableAllHooks: false }).disableAllHooks).toBeUndefined();
+  });
+  it('effortLevel present for high, absent for xhigh (goes to run.sh)', () => {
+    expect(settings({ effort: 'high' }).effortLevel).toBe('high');
+    // xhigh with no runner → CF401 would block; but here just assert not in settings.
+    const s = settings({ effort: 'medium' });
+    expect(s.effortLevel).toBe('medium');
+  });
+  it('permissions buckets emitted only when non-empty', () => {
+    const s = settings({ permissions: { allow: ['Read'], deny: [], ask: [] } });
+    expect(s.permissions).toEqual({ allow: ['Read'] });
+    expect(s.permissions.deny).toBeUndefined();
+    expect(s.permissions.ask).toBeUndefined();
+  });
+  it('no settings.json emitted when nothing to configure', () => {
+    const files = generate(g([baseCmd()]));
+    expect(files.some((f) => f.path.endsWith('settings.json'))).toBe(false);
+  });
+});
+
+describe('run.sh flag emission (present vs absent)', () => {
+  const run = (settings: Parameters<typeof g>[2], headlessData = { promptTemplate: 'go' }) =>
+    find(generate(g([n.headless('h', headlessData)], [], settings)), 'run.sh').content;
+
+  it('worktree flag toggles', () => {
+    expect(run({ headless: { enabled: true, worktree: true } })).toContain('--worktree');
+    expect(run({ headless: { enabled: true, worktree: false } })).not.toContain('--worktree');
+  });
+  it('verbose flag toggles', () => {
+    expect(run({ headless: { enabled: true, verbose: true } })).toContain('--verbose');
+    expect(run({ headless: { enabled: true } })).not.toContain('--verbose');
+  });
+  it('maxTurns emitted when set (incl. 0)', () => {
+    expect(run({ headless: { enabled: true, maxTurns: 0 } })).toContain('--max-turns 0');
+    expect(run({ headless: { enabled: true } })).not.toContain('--max-turns');
+  });
+  it('initMode maps to the right flag', () => {
+    expect(find(generate(g([n.headless('h', { promptTemplate: 'go', initMode: 'init-only' })], [], {})), 'run.sh').content).toContain('--init-only');
+    expect(find(generate(g([n.headless('h', { promptTemplate: 'go', initMode: 'maintenance' })], [], {})), 'run.sh').content).toContain('--maintenance');
+  });
+  it('no run.sh when neither headless setting nor headless node present', () => {
+    expect(generate(g([baseCmd()])).some((f) => f.path === 'run.sh')).toBe(false);
+  });
+});
+
+describe('hooks block grouping', () => {
+  it('groups handlers sharing a matcher into one entry', () => {
+    const graph = g(
+      [
+        baseCmd(),
+        n.hookEvent('t', { event: 'PreToolUse', matcher: 'Bash', scope: 'project' }),
+        n.command('h1', { command: 'a' }),
+        n.command('h2', { command: 'b' }),
+      ],
+      [e('t', 'h1'), e('t', 'h2')],
+    );
+    const hooks = JSON.parse(find(generate(graph), 'settings.json').content).hooks.PreToolUse;
+    expect(hooks).toHaveLength(1);
+    expect(hooks[0].hooks).toHaveLength(2);
+    expect(hooks[0].matcher).toBe('Bash');
+  });
+});

@@ -12,8 +12,32 @@ describe('selfLint', () => {
     expect(() => selfLint([ok({ path: 'x/settings.json', content: '{"a":1}\n' })])).not.toThrow();
   });
 
-  it('rejects invalid JSON', () => {
-    expect(() => selfLint([ok({ path: 'x/settings.json', content: '{bad}\n' })])).toThrow(SelfLintError);
+  it('rejects invalid JSON with a descriptive message', () => {
+    expect(() => selfLint([ok({ path: 'x/settings.json', content: '{bad}\n' })])).toThrow(/invalid JSON/);
+  });
+
+  it('rejects frontmatter that parses to a non-mapping', () => {
+    // A YAML scalar (not an object) — exercises the "not a mapping" branch.
+    expect(() => selfLint([ok({ path: 'x/SKILL.md', content: '---\njust a string\n---\n\nbody\n' })])).toThrow(
+      /not a mapping/,
+    );
+  });
+
+  it('reports invalid YAML frontmatter distinctly from a missing block', () => {
+    expect(() =>
+      selfLint([ok({ path: 'x/SKILL.md', content: '---\nkey: "unterminated\n---\n\nbody\n' })]),
+    ).toThrow(/invalid YAML frontmatter/);
+  });
+
+  it('SelfLintError carries the file path and prefixed message', () => {
+    try {
+      selfLint([ok({ path: 'deep/settings.json', content: 'nope' })]);
+      throw new Error('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(SelfLintError);
+      expect((err as SelfLintError).file).toBe('deep/settings.json');
+      expect((err as Error).message).toMatch(/^self-lint failed for deep\/settings\.json:/);
+    }
   });
 
   it('rejects JSON without a trailing newline', () => {
@@ -52,5 +76,28 @@ describe('selfLint', () => {
   it('requires a shebang on scripts', () => {
     const bad = ok({ path: 'run.sh', content: 'claude -p go\n', executable: true });
     expect(() => selfLint([bad])).toThrow(/shebang/);
+  });
+
+  it('reports the hook stdin-read requirement distinctly from the jq guard', () => {
+    const bad = ok({
+      path: '.claude/hooks/x.sh',
+      content: '#!/bin/bash\ncommand -v jq >/dev/null || exit 1\necho hi\n',
+      executable: true,
+    });
+    expect(() => selfLint([bad])).toThrow(/stdin read/);
+  });
+
+  it('rejects JSON trailing-newline with the specific message', () => {
+    expect(() => selfLint([ok({ path: 'x/settings.json', content: '{}' })])).toThrow(/trailing newline/);
+  });
+
+  it('re-throws a nested SelfLintError unchanged (does not wrap twice)', () => {
+    // A markdown file with malformed frontmatter: the inner catch must rethrow the
+    // SelfLintError (the "err instanceof SelfLintError" branch), not wrap it.
+    try {
+      selfLint([ok({ path: 'x/SKILL.md', content: '---\n123\n---\n\nbody\n' })]);
+    } catch (err) {
+      expect((err as Error).message).not.toMatch(/self-lint failed.*self-lint failed/);
+    }
   });
 });
