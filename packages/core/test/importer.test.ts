@@ -73,6 +73,72 @@ describe('parseProject reconstruct (no flow.clauflow.json)', () => {
     }
   });
 
+  it('maps every optional skill frontmatter field when present', () => {
+    const g = parseProject([
+      file(
+        '.claude/skills/full/SKILL.md',
+        '---\ndescription: d\nargument-hint: "[x]"\nmodel: opus\ncontext: fork\nagent: helper\ndisable-model-invocation: true\n---\n\nbody\n',
+      ),
+    ])!;
+    const cmd = g.nodes.find((n) => n.kind === 'trigger.slashCommand')!;
+    if (cmd.kind !== 'trigger.slashCommand') throw new Error('kind');
+    expect(cmd.data).toMatchObject({
+      name: 'full',
+      description: 'd',
+      argumentHint: '[x]',
+      model: 'opus',
+      contextFork: true,
+      agent: 'helper',
+      disableModelInvocation: true,
+    });
+  });
+
+  it('omits every optional skill field when absent (present-vs-absent kill)', () => {
+    const g = parseProject([file('.claude/skills/bare/SKILL.md', '---\ndescription: d\n---\n\nbody\n')])!;
+    const cmd = g.nodes.find((n) => n.kind === 'trigger.slashCommand')!;
+    if (cmd.kind !== 'trigger.slashCommand') throw new Error('kind');
+    expect(cmd.data.argumentHint).toBeUndefined();
+    expect(cmd.data.model).toBeUndefined();
+    expect(cmd.data.contextFork).toBeUndefined();
+    expect(cmd.data.agent).toBeUndefined();
+    expect(cmd.data.disableModelInvocation).toBeUndefined();
+    expect(cmd.data.extra).toBeUndefined();
+  });
+
+  it('context other than "fork" does not set contextFork', () => {
+    const g = parseProject([file('.claude/skills/x/SKILL.md', '---\ndescription: d\ncontext: something\n---\n\nb\n')])!;
+    const cmd = g.nodes.find((n) => n.kind === 'trigger.slashCommand')!;
+    if (cmd.kind === 'trigger.slashCommand') expect(cmd.data.contextFork).toBeUndefined();
+  });
+
+  it('a description-less skill imports as empty string, not undefined', () => {
+    const g = parseProject([file('.claude/skills/x/SKILL.md', '---\nmodel: opus\n---\n\nb\n')])!;
+    const cmd = g.nodes.find((n) => n.kind === 'trigger.slashCommand')!;
+    if (cmd.kind === 'trigger.slashCommand') expect(cmd.data.description).toBe('');
+  });
+
+  it('subagent without tools/model/description omits them (systemPrompt required)', () => {
+    const g = parseProject([file('.claude/agents/a.md', '---\nname: a\n---\n\nJust a body.\n')])!;
+    const agent = g.nodes.find((n) => n.kind === 'step.subagent')!;
+    if (agent.kind !== 'step.subagent') throw new Error('kind');
+    expect(agent.data.tools).toBeUndefined();
+    expect(agent.data.model).toBeUndefined();
+    expect(agent.data.description).toBeUndefined();
+    expect(agent.data.systemPrompt).toBe('Just a body.');
+  });
+
+  it('assigns distinct sequential node ids and a body edge', () => {
+    const g = parseProject([
+      file('.claude/skills/one/SKILL.md', '---\ndescription: a\n---\n\nbody one\n'),
+      file('.claude/agents/two.md', '---\nname: two\n---\n\nagent body\n'),
+    ])!;
+    const ids = g.nodes.map((n) => n.id);
+    expect(new Set(ids).size).toBe(ids.length); // all unique
+    // command + its body step + agent = 3 nodes; one edge (command→body).
+    expect(g.nodes).toHaveLength(3);
+    expect(g.edges).toHaveLength(1);
+  });
+
   it('re-emitting a reconstructed skill preserves description + extra (verbatim round-trip)', () => {
     const original = '---\ndescription: d\nx-custom: kept\n---\n\nBody text.\n';
     const g = parseProject([file('.claude/skills/x/SKILL.md', original)])!;
