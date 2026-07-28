@@ -67,6 +67,23 @@ describe('WebHostBridge.writeFiles — File System Access path', () => {
     const res = await bridge.writeFiles(files, { dryRun: true });
     expect(res.written).toEqual(files.map((f) => f.path));
   });
+
+  it('rejects an unsafe path as a hard error — never silently falls back to the zip', async () => {
+    const store = new Map<string, string>();
+    (globalThis as { showDirectoryPicker: unknown }).showDirectoryPicker = async () => new FakeDirHandle(store);
+    const bridge = new WebHostBridge(ui);
+    await expect(bridge.writeFiles([{ path: '.claude/../../escape', content: 'x' }])).rejects.toThrow(/unsafe/);
+    expect(store.size).toBe(0); // nothing written anywhere
+  });
+
+  it('warns how to restore the exec bit after a directory write (FS API cannot chmod)', async () => {
+    const store = new Map<string, string>();
+    (globalThis as { showDirectoryPicker: unknown }).showDirectoryPicker = async () => new FakeDirHandle(store);
+    // security-gate emits an executable hook script.
+    const files = generate(TEMPLATES.find((t) => t.slug === 'security-gate')!.graph);
+    await new WebHostBridge(ui).writeFiles(files);
+    expect(ui.notify).toHaveBeenCalledWith('warn', expect.stringMatching(/chmod \+x/));
+  });
 });
 
 describe('WebHostBridge.readProject — import round-trip', () => {

@@ -5,7 +5,7 @@
 import type { GeneratedFile, WorkflowGraph } from '@clauflow/core';
 import { parseProject } from '@clauflow/core';
 import type { HostBridge, WriteResult } from '@clauflow/canvas';
-import { toDirEntries, zipBlob } from './export-zip.js';
+import { toDirEntries, zipBlob, type DirEntry } from './export-zip.js';
 import { isImportablePath, shouldDescend } from './read-project.js';
 
 export function supportsFileSystemAccess(): boolean {
@@ -27,13 +27,19 @@ export class WebHostBridge implements HostBridge {
     if (opts?.dryRun) {
       return { written: files.map((f) => f.path), skipped: [], errors: [] };
     }
+    // Enforce path safety ONCE, up front, for every writer. An unsafe path is a
+    // hard error surfaced to the user — never silently rerouted to the zip.
+    const entries = toDirEntries(files);
+
     if (supportsFileSystemAccess()) {
       try {
-        return await this.writeToDirectory(files);
+        return await this.writeToDirectory(entries, files.length);
       } catch (err) {
         if ((err as DOMException)?.name === 'AbortError') {
           return { written: [], skipped: files.map((f) => f.path), errors: [] };
         }
+        // A real write failure (e.g. permission) degrades to the zip — the paths
+        // are already validated, so this fallback can't be an escape vector.
         this.ui.notify('warn', `Directory write failed (${(err as Error).message}); downloading a zip instead.`);
       }
     }
@@ -41,15 +47,17 @@ export class WebHostBridge implements HostBridge {
     return { written: [], skipped: [], errors: [], zipped: files.map((f) => f.path) };
   }
 
-  /** Write every file into a user-picked directory, creating folders as needed. */
-  private async writeToDirectory(files: GeneratedFile[]): Promise<WriteResult> {
+  /** Write pre-validated entries into a user-picked directory, mkdir -p as needed. */
+  private async writeToDirectory(entries: DirEntry[], total: number): Promise<WriteResult> {
     const root =
       this.dirHandle ?? (await window.showDirectoryPicker({ id: 'clauflow-export', mode: 'readwrite' }));
     this.dirHandle = root;
 
     const written: string[] = [];
     const errors: string[] = [];
-    for (const { segments, file } of toDirEntries(files)) {
+    let anyExecutable = false;
+    for (const { segments, file } of entries) {
+      if (file.executable) anyExecutable = true;
       try {
         let dir = root;
         for (const seg of segments.slice(0, -1)) {
@@ -65,7 +73,11 @@ export class WebHostBridge implements HostBridge {
         errors.push(`${file.path}: ${(err as Error).message}`);
       }
     }
-    this.ui.notify(errors.length ? 'warn' : 'info', `Wrote ${written.length}/${files.length} files.`);
+    this.ui.notify(errors.length ? 'warn' : 'info', `Wrote ${written.length}/${total} files.`);
+    // The File System Access API can't set the exec bit; tell the user how.
+    if (anyExecutable && errors.length === 0) {
+      this.ui.notify('warn', 'Mark hook scripts executable: chmod +x .claude/hooks/*.sh run.sh');
+    }
     return { written, skipped: [], errors };
   }
 

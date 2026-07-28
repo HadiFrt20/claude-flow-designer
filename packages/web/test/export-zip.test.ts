@@ -16,17 +16,23 @@ describe('buildZip / zipBuffer', () => {
     }
   });
 
-  it('marks executable files with 0755 unix permissions', async () => {
+  it('preserves the 0755 exec bit through a serialize → extract round-trip', async () => {
     const files: GeneratedFile[] = [
       { path: '.claude/hooks/x.sh', content: '#!/bin/bash\n', executable: true },
       { path: '.claude/settings.json', content: '{}\n' },
     ];
-    const zip = buildZip(files);
-    // JSZip stores unixPermissions on the file object.
-    const sh = zip.file('.claude/hooks/x.sh')!;
-    const json = zip.file('.claude/settings.json')!;
-    expect((sh as unknown as { unixPermissions: number }).unixPermissions).toBe(0o755);
-    expect((json as unknown as { unixPermissions: number | null }).unixPermissions ?? null).toBeNull();
+    // Round-trip through generateAsync (platform:UNIX) + loadAsync — this is what
+    // actually reaches the user, unlike the pre-serialization JSZip object.
+    const back = await JSZip.loadAsync(await zipBuffer(files));
+    const sh = back.file('.claude/hooks/x.sh')! as unknown as { unixPermissions: number };
+    const json = back.file('.claude/settings.json')! as unknown as { unixPermissions: number | null };
+    expect(sh.unixPermissions & 0o777).toBe(0o755);
+    // A non-executable file must NOT carry the exec bit.
+    expect((json.unixPermissions ?? 0) & 0o111).toBe(0);
+  });
+
+  it('buildZip refuses an unsafe path (zip writer honors the same check as the dir writer)', () => {
+    expect(() => buildZip([{ path: '.claude/../../escape.txt', content: 'x' }])).toThrow(/unsafe/);
   });
 });
 
@@ -42,6 +48,12 @@ describe('toDirEntries', () => {
 
   it('refuses a path with ..', () => {
     expect(() => toDirEntries([{ path: '../outside.txt', content: 'x' }])).toThrow(/unsafe/);
+    expect(() => toDirEntries([{ path: '.claude/../../x', content: 'x' }])).toThrow(/unsafe/);
+  });
+
+  it('refuses empty segments and backslash separators', () => {
+    expect(() => toDirEntries([{ path: 'a//b.txt', content: 'x' }])).toThrow(/unsafe/);
+    expect(() => toDirEntries([{ path: '.claude\\hooks\\x.sh', content: 'x' }])).toThrow(/unsafe/);
   });
 
   it('accepts the full template output', () => {
