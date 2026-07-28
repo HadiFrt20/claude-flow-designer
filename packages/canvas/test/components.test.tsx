@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { EditorStore } from '../src/store.js';
 import { ProblemsPanel } from '../src/components/ProblemsPanel.js';
@@ -69,6 +69,67 @@ describe('PropertyPanel', () => {
     store.select('c1');
     render(<PropertyPanel store={store} />);
     expect(screen.getByRole('alert')).toHaveTextContent(/empty description/i);
+  });
+
+  // These structured fields live in the Advanced group (a collapsed <details>).
+  // jsdom does not toggle <details> on summary click, so open it directly — the
+  // control reachability, not the disclosure widget, is what these tests assert.
+  const openAdvanced = () => {
+    const summary = screen.getByText('Advanced');
+    (summary.closest('details') as HTMLDetailsElement).open = true;
+  };
+
+  it('argList control adds a structured {name, placeholder} arg (by hand)', async () => {
+    const user = userEvent.setup();
+    const store = new EditorStore();
+    store.addNode(cmd('deploy'));
+    store.select('c1');
+    render(<PropertyPanel store={store} />);
+    openAdvanced();
+    await user.click(screen.getByRole('button', { name: 'add arg' }));
+    await user.type(screen.getByLabelText('arg 1 name'), 'issue');
+    const node = store.current.nodes[0]!;
+    if (node.kind === 'trigger.slashCommand') {
+      expect(node.data.args).toEqual([{ name: 'issue', placeholder: '$1' }]);
+    }
+  });
+
+  it('keyValue control parses http headers into a Record', async () => {
+    const user = userEvent.setup();
+    const store = new EditorStore();
+    store.addNode({ id: 'h1', kind: 'hook.http', label: 'h', position: { x: 0, y: 0 }, data: { url: 'https://x' } });
+    store.select('h1');
+    render(<PropertyPanel store={store} />);
+    openAdvanced();
+    await user.type(screen.getByLabelText('Headers'), 'Authorization: Bearer t');
+    const node = store.current.nodes[0]!;
+    if (node.kind === 'hook.http') expect(node.data.headers).toEqual({ Authorization: 'Bearer t' });
+  });
+
+  it('json control parses mcp input into an object', async () => {
+    const user = userEvent.setup();
+    const store = new EditorStore();
+    store.addNode({ id: 'm1', kind: 'step.mcpTool', label: 'm', position: { x: 0, y: 0 }, data: { server: 's', tool: 't' } });
+    store.select('m1');
+    render(<PropertyPanel store={store} />);
+    openAdvanced();
+    const input = screen.getByLabelText('Input');
+    await user.clear(input);
+    await user.type(input, '{{"a":1}');
+    const node = store.current.nodes[0]!;
+    if (node.kind === 'step.mcpTool') expect(node.data.input).toEqual({ a: 1 });
+  });
+
+  it('multiSelect control toggles frontmatterHooks', async () => {
+    const user = userEvent.setup();
+    const store = new EditorStore();
+    store.addNode({ id: 's1', kind: 'step.subagent', label: 's', position: { x: 0, y: 0 }, data: { name: 'a', systemPrompt: 'x', description: 'agent' } });
+    store.select('s1');
+    render(<PropertyPanel store={store} />);
+    openAdvanced();
+    await user.click(within(screen.getByRole('group', { name: 'Frontmatter hooks' })).getByLabelText('Stop'));
+    const node = store.current.nodes[0]!;
+    if (node.kind === 'step.subagent') expect(node.data.frontmatterHooks).toEqual(['Stop']);
   });
 
   it('shows a placeholder prompt when nothing is selected', () => {

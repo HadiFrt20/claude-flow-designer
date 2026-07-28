@@ -9,15 +9,23 @@ import { generate, ExportGateError } from '@clauflow/core';
 import type { GeneratedFile } from '@clauflow/core';
 import { TOKENS, SPACE, SEVERITY_COLOR, SEVERITY_ICON } from '../tokens.js';
 
-type PreviewResult = { ok: true; files: GeneratedFile[] } | { ok: false; blocking: ReturnType<EditorStore['diagnostics']> };
+type PreviewResult =
+  | { ok: true; files: GeneratedFile[] }
+  | { ok: false; blocking: ReturnType<EditorStore['diagnostics']> }
+  | { ok: false; error: string };
 
-/** Pure helper (tested directly): generate or return the blocking diagnostics. */
+/**
+ * Pure helper (tested directly): generate, or return the blocking diagnostics,
+ * or — for any other emitter error (e.g. a SelfLintError on an intermediate
+ * graph) — the message. Never throws, so a mid-edit graph can't crash the
+ * Designer tree.
+ */
 export function previewOf(store: EditorStore): PreviewResult {
   try {
     return { ok: true, files: generate(store.current) };
   } catch (err) {
     if (err instanceof ExportGateError) return { ok: false, blocking: err.blocking };
-    throw err;
+    return { ok: false, error: (err as Error).message };
   }
 }
 
@@ -39,7 +47,12 @@ export function PreviewPane({ store, debounceMs = 150 }: { store: EditorStore; d
 
   return (
     <section aria-label="Preview" style={{ display: 'flex', flexDirection: 'column', height: '100%', background: TOKENS.surface, color: TOKENS.text, fontFamily: TOKENS.monoFont }}>
-      {!result.ok ? (
+      {!result.ok && 'error' in result ? (
+        <div style={{ padding: SPACE(3) }} role="alert">
+          <p style={{ fontFamily: TOKENS.uiFont, color: TOKENS.error }}>Codegen error (unexpected):</p>
+          <pre style={{ whiteSpace: 'pre-wrap', color: TOKENS.error }}>{result.error}</pre>
+        </div>
+      ) : !result.ok ? (
         <div style={{ padding: SPACE(3) }}>
           <p style={{ fontFamily: TOKENS.uiFont, color: TOKENS.textMuted }}>
             Export is blocked — fix these to preview generated files:

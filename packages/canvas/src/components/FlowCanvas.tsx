@@ -7,6 +7,8 @@ import {
   Background,
   MiniMap,
   Controls,
+  Handle,
+  Position,
   type Node as RFNode,
   type Edge as RFEdge,
   type Connection,
@@ -15,7 +17,7 @@ import {
 } from '@xyflow/react';
 import { useEditor } from '../useEditor.js';
 import type { EditorStore } from '../store.js';
-import { edgeAllowed, type WorkflowNode } from '@clauflow/core';
+import { edgeAllowed, isTrigger, type WorkflowNode } from '@clauflow/core';
 import { ACCENT, CATEGORY_GLYPH, categoryOf, TOKENS, SPACE, SEVERITY_ICON, SEVERITY_COLOR } from '../tokens.js';
 
 interface NodeData extends Record<string, unknown> {
@@ -26,6 +28,11 @@ interface NodeData extends Record<string, unknown> {
 function CFNode({ data }: { data: NodeData }) {
   const { node, worst } = data;
   const cat = categoryOf(node.kind);
+  // Triggers are graph entry points (source only); output.decision is a terminal
+  // (target only); every other kind can both receive and emit an edge.
+  const hasTarget = !isTrigger(node);
+  const hasSource = node.kind !== 'output.decision';
+  const dotStyle = { width: 8, height: 8, background: ACCENT[cat], border: 'none' };
   return (
     <div
       style={{
@@ -34,6 +41,7 @@ function CFNode({ data }: { data: NodeData }) {
         fontFamily: TOKENS.uiFont, padding: SPACE(2), position: 'relative',
       }}
     >
+      {hasTarget && <Handle type="target" position={Position.Left} style={dotStyle} />}
       {worst && (
         <span
           aria-label={worst === 'error' ? 'has errors' : 'has warnings'}
@@ -46,6 +54,7 @@ function CFNode({ data }: { data: NodeData }) {
         <span aria-hidden>{CATEGORY_GLYPH[cat]}</span> {node.kind}
       </div>
       <div style={{ fontWeight: 600 }}>{node.label || '(unnamed)'}</div>
+      {hasSource && <Handle type="source" position={Position.Right} style={dotStyle} />}
     </div>
   );
 }

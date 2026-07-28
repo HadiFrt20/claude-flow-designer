@@ -14,6 +14,23 @@ describe('FlowCanvas', () => {
     expect(screen.getByText('trigger.slashCommand')).toBeInTheDocument();
   });
 
+  it('a trigger renders a source handle and no target handle', () => {
+    const store = new EditorStore();
+    store.addNode({ id: 'c1', kind: 'trigger.slashCommand', label: 'go', position: { x: 0, y: 0 }, data: { name: 'go', description: 'd' } });
+    const { container } = render(<FlowCanvas store={store} />);
+    // React Flow tags handles with .react-flow__handle + a source/target class.
+    expect(container.querySelector('.react-flow__handle.source')).not.toBeNull();
+    expect(container.querySelector('.react-flow__handle.target')).toBeNull();
+  });
+
+  it('output.decision renders a target handle and no source handle', () => {
+    const store = new EditorStore();
+    store.addNode({ id: 'd1', kind: 'output.decision', label: 'd', position: { x: 0, y: 0 }, data: { mode: 'allow' } });
+    const { container } = render(<FlowCanvas store={store} />);
+    expect(container.querySelector('.react-flow__handle.target')).not.toBeNull();
+    expect(container.querySelector('.react-flow__handle.source')).toBeNull();
+  });
+
   it('shows a diagnostic badge on a node with an error', () => {
     const store = new EditorStore();
     // subagent tool not in allow set → CF301 error on the node.

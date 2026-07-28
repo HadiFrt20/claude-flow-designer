@@ -20,6 +20,13 @@ export function ExportDialog({ store, host, onClose }: { store: EditorStore; hos
   const result = previewOf(store);
   const acked = store.current.meta.ackedWarnings ?? [];
 
+  if (!result.ok && 'error' in result) {
+    return (
+      <Modal title="Cannot export yet" onClose={onClose}>
+        <p style={{ color: TOKENS.error }}>Codegen error: {result.error}</p>
+      </Modal>
+    );
+  }
   if (!result.ok) {
     return (
       <Modal title="Cannot export yet" onClose={onClose}>

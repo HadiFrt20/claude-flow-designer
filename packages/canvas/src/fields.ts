@@ -2,7 +2,18 @@
 // EVERY data field (DoD requirement), grouped Basic / Advanced (DESIGN-BRIEF).
 // The React PropertyPanel renders these generically, so adding a schema field =
 // adding a row here (no bespoke component). Field keys match the zod data schema.
-import type { NodeKind } from '@clauflow/core';
+import type { NodeKind, HookEvent } from '@clauflow/core';
+
+// All hook events, for the event select and the frontmatterHooks multi-select.
+const HOOK_EVENTS: readonly HookEvent[] = [
+  'SessionStart', 'Setup', 'InstructionsLoaded', 'UserPromptSubmit',
+  'UserPromptExpansion', 'PreToolUse', 'PermissionRequest', 'PermissionDenied',
+  'PostToolUse', 'PostToolUseFailure', 'PostToolBatch', 'Notification',
+  'MessageDisplay', 'SubagentStart', 'SubagentStop', 'TaskCreated',
+  'TaskCompleted', 'Stop', 'StopFailure', 'TeammateIdle', 'ConfigChange',
+  'CwdChanged', 'FileChanged', 'WorktreeCreate', 'WorktreeRemove',
+  'PreCompact', 'PostCompact', 'Elicitation', 'ElicitationResult', 'SessionEnd',
+];
 
 export type FieldType =
   | 'text'
@@ -10,9 +21,13 @@ export type FieldType =
   | 'number'
   | 'boolean'
   | 'select'
+  | 'multiSelect' // set of options → string[] (e.g. frontmatterHooks)
   | 'model' // model picker (known aliases + free text)
   | 'effort'
   | 'stringList' // comma/newline list → string[]
+  | 'keyValue' // `key: value` lines → Record<string,string> (e.g. http headers)
+  | 'argList' // positional args → {name, placeholder}[]
+  | 'json' // arbitrary object literal (e.g. mcp input, updatedInput)
   | 'matcher' // tool matcher with syntax help
   | 'permissionRule'; // e.g. Bash(git *)
 
@@ -39,6 +54,7 @@ export const FIELD_DESCRIPTORS: Record<NodeKind, FieldDescriptor[]> = {
     { key: 'name', label: 'Command name', type: 'text', group: 'Basic', hint: 'Becomes /<name> and the skill folder.' },
     { key: 'description', label: 'Description', type: 'textarea', group: 'Basic', hint: 'Shown to Claude for auto-invocation; keep it tight.' },
     { key: 'argumentHint', label: 'Argument hint', type: 'text', group: 'Basic', placeholder: '[issue] [priority]' },
+    { key: 'args', label: 'Arguments', type: 'argList', group: 'Advanced', hint: 'Positional args: name + placeholder ($0..$9 or $ARGUMENTS).' },
     { key: 'disableModelInvocation', label: 'Manual-only (no auto-invoke)', type: 'boolean', group: 'Advanced' },
     { key: 'contextFork', label: 'Run in a forked context', type: 'boolean', group: 'Advanced' },
     { key: 'agent', label: 'Delegate to subagent', type: 'text', group: 'Advanced', hint: 'Name of a subagent node to hand the whole command to.' },
@@ -46,7 +62,7 @@ export const FIELD_DESCRIPTORS: Record<NodeKind, FieldDescriptor[]> = {
     EFFORT,
   ],
   'trigger.hookEvent': [
-    { key: 'event', label: 'Event', type: 'text', group: 'Basic', hint: 'Lifecycle event, e.g. PreToolUse.' },
+    { key: 'event', label: 'Event', type: 'select', group: 'Basic', options: HOOK_EVENTS, hint: 'Lifecycle event, e.g. PreToolUse.' },
     { key: 'matcher', label: 'Matcher', type: 'matcher', group: 'Basic', hint: 'Tool name / list / regex. For MCP use mcp__server__.*' },
     { key: 'scope', label: 'Scope', type: 'select', group: 'Advanced', options: ['project', 'user', 'local'], hint: 'local → settings.local.json (machine-specific).' },
   ],
@@ -76,12 +92,14 @@ export const FIELD_DESCRIPTORS: Record<NodeKind, FieldDescriptor[]> = {
     { key: 'description', label: 'Description', type: 'textarea', group: 'Basic', hint: 'When Claude should delegate to it (required to auto-delegate).' },
     { key: 'systemPrompt', label: 'System prompt', type: 'textarea', group: 'Basic' },
     { key: 'tools', label: 'Allowed tools', type: 'stringList', group: 'Advanced', hint: 'Blank = inherit all.' },
+    { key: 'frontmatterHooks', label: 'Frontmatter hooks', type: 'multiSelect', group: 'Advanced', options: HOOK_EVENTS, hint: 'A Stop hook here auto-converts to SubagentStop (CF303).' },
     MODEL,
     EFFORT,
   ],
   'step.mcpTool': [
     { key: 'server', label: 'MCP server', type: 'text', group: 'Basic', hint: 'Plugin-scoped: plugin:<plugin>:<server>.' },
     { key: 'tool', label: 'Tool', type: 'text', group: 'Basic' },
+    { key: 'input', label: 'Input', type: 'json', group: 'Advanced', hint: 'JSON object; supports ${tool_input.*} substitution.' },
   ],
   'hook.command': [
     { key: 'command', label: 'Command', type: 'text', group: 'Basic', hint: 'Use exec form (args) when a path placeholder is involved.' },
@@ -97,7 +115,7 @@ export const FIELD_DESCRIPTORS: Record<NodeKind, FieldDescriptor[]> = {
   ],
   'hook.http': [
     { key: 'url', label: 'URL', type: 'text', group: 'Basic' },
-    { key: 'headers', label: 'Headers', type: 'textarea', group: 'Advanced', hint: 'key: value per line.' },
+    { key: 'headers', label: 'Headers', type: 'keyValue', group: 'Advanced', hint: 'key: value per line.' },
     { key: 'allowedEnvVars', label: 'Allowed env vars', type: 'stringList', group: 'Advanced' },
     { key: 'timeout', label: 'Timeout (s)', type: 'number', group: 'Advanced' },
   ],
@@ -115,7 +133,9 @@ export const FIELD_DESCRIPTORS: Record<NodeKind, FieldDescriptor[]> = {
   ],
   'output.decision': [
     { key: 'mode', label: 'Decision', type: 'select', group: 'Basic', options: ['allow', 'deny', 'ask', 'block', 'stopAll'], hint: 'What the hook tells Claude to do.' },
-    { key: 'reason', label: 'Reason', type: 'textarea', group: 'Basic', hint: 'Shown to Claude / the user.' },
+    { key: 'reason', label: 'Reason', type: 'textarea', group: 'Basic', hint: 'Shown to Claude / the user. Dropped when the hook is a PermissionRequest.' },
+    { key: 'updatedInput', label: 'Updated tool input', type: 'json', group: 'Advanced', hint: 'PreToolUse / PermissionRequest: replacement tool input (JSON object).' },
+    { key: 'updatedToolOutput', label: 'Updated tool output', type: 'json', group: 'Advanced', hint: 'PostToolUse: replacement tool output (JSON object).' },
     { key: 'additionalContext', label: 'Additional context', type: 'textarea', group: 'Advanced' },
     { key: 'systemMessage', label: 'System message', type: 'text', group: 'Advanced' },
     { key: 'suppressOutput', label: 'Suppress output', type: 'boolean', group: 'Advanced' },

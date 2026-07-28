@@ -47,18 +47,108 @@ export function SettingsPanel({ store }: { store: EditorStore }) {
         <Advisor diags={advisorFor('permissionMode')} />
       </Row>
 
+      <Row label="Output style">
+        <input value={s.outputStyle ?? ''} onChange={(e) => store.updateSettings({ outputStyle: e.target.value || undefined })} aria-label="Output style" style={input(false)} />
+      </Row>
+
+      <Row label="Permissions">
+        <PermField store={store} bucket="allow" values={s.permissions?.allow ?? []} />
+        <PermField store={store} bucket="deny" values={s.permissions?.deny ?? []} />
+        <PermField store={store} bucket="ask" values={s.permissions?.ask ?? []} />
+        <Advisor diags={settingsDiags.filter((d) => d.field?.startsWith('permissions'))} />
+      </Row>
+
+      <Row label="Environment variables">
+        <textarea
+          aria-label="Environment variables"
+          rows={3}
+          value={Object.entries(s.env ?? {}).map(([k, v]) => `${k}=${v}`).join('\n')}
+          onChange={(e) => {
+            const env: Record<string, string> = {};
+            for (const line of e.target.value.split('\n')) {
+              const idx = line.indexOf('=');
+              if (idx < 0) continue;
+              const k = line.slice(0, idx).trim();
+              if (k) env[k] = line.slice(idx + 1).trim();
+            }
+            store.updateSettings({ env: Object.keys(env).length ? env : undefined });
+          }}
+          placeholder="KEY=value"
+          style={{ ...input(settingsDiags.some((d) => d.field === 'env')), fontFamily: TOKENS.monoFont }}
+        />
+        <Advisor diags={settingsDiags.filter((d) => d.field === 'env')} />
+      </Row>
+
+      <Row label="Hooks">
+        <Check store={store} label="Disable all hooks" checked={s.disableAllHooks ?? false} onToggle={(v) => store.updateSettings({ disableAllHooks: v || undefined })} />
+      </Row>
+
       <Row label="Headless runner">
-        <label style={{ display: 'flex', gap: SPACE(1), alignItems: 'center' }}>
-          <input
-            type="checkbox"
-            checked={s.headless?.enabled ?? false}
-            onChange={(e) => store.updateSettings({ headless: { ...(s.headless ?? { enabled: false }), enabled: e.target.checked } })}
-            aria-label="Enable headless runner"
-          />
-          <span style={{ color: TOKENS.textMuted, fontSize: '0.85em' }}>Emit run.sh (claude -p)</span>
-        </label>
+        <Check
+          store={store}
+          label="Emit run.sh (claude -p)"
+          checked={s.headless?.enabled ?? false}
+          onToggle={(v) => store.updateSettings({ headless: { ...(s.headless ?? { enabled: false }), enabled: v } })}
+        />
+        {s.headless?.enabled && (
+          <div style={{ marginTop: SPACE(2), paddingLeft: SPACE(2), borderLeft: `1px solid ${TOKENS.border}` }}>
+            <label style={{ fontSize: '0.8em', color: TOKENS.textMuted }}>Output format</label>
+            <select
+              aria-label="Output format"
+              value={s.headless.outputFormat ?? ''}
+              onChange={(e) => store.updateSettings({ headless: { ...s.headless!, outputFormat: (e.target.value || undefined) as typeof s.headless.outputFormat } })}
+              style={input(settingsDiags.some((d) => d.field === 'headless.outputFormat'))}
+            >
+              <option value="">text</option>
+              <option value="json">json</option>
+              <option value="stream-json">stream-json</option>
+            </select>
+            <Advisor diags={settingsDiags.filter((d) => d.field?.startsWith('headless'))} />
+            <label style={{ fontSize: '0.8em', color: TOKENS.textMuted }}>Max turns</label>
+            <input
+              type="number"
+              aria-label="Max turns"
+              value={s.headless.maxTurns ?? ''}
+              onChange={(e) => store.updateSettings({ headless: { ...s.headless!, maxTurns: e.target.value === '' ? undefined : Number(e.target.value) } })}
+              style={input(false)}
+            />
+            <Check store={store} label="Worktree" checked={s.headless.worktree ?? false} onToggle={(v) => store.updateSettings({ headless: { ...s.headless!, worktree: v || undefined } })} />
+            <Check store={store} label="Verbose" checked={s.headless.verbose ?? false} onToggle={(v) => store.updateSettings({ headless: { ...s.headless!, verbose: v || undefined } })} />
+          </div>
+        )}
       </Row>
     </aside>
+  );
+}
+
+function Check({ label, checked, onToggle }: { store: EditorStore; label: string; checked: boolean; onToggle: (v: boolean) => void }) {
+  return (
+    <label style={{ display: 'flex', gap: SPACE(1), alignItems: 'center' }}>
+      <input type="checkbox" checked={checked} onChange={(e) => onToggle(e.target.checked)} aria-label={label} />
+      <span style={{ color: TOKENS.textMuted, fontSize: '0.85em' }}>{label}</span>
+    </label>
+  );
+}
+
+function PermField({ store, bucket, values }: { store: EditorStore; bucket: 'allow' | 'deny' | 'ask'; values: string[] }) {
+  const current = store.current.settings.permissions ?? { allow: [], deny: [], ask: [] };
+  return (
+    <div style={{ marginBottom: SPACE(1) }}>
+      <label style={{ fontSize: '0.75em', color: TOKENS.textMuted }}>{bucket}</label>
+      <textarea
+        aria-label={`permissions ${bucket}`}
+        rows={2}
+        value={values.join('\n')}
+        onChange={(e) => {
+          const list = e.target.value.split('\n').map((s) => s.trim()).filter(Boolean);
+          const next = { ...current, [bucket]: list };
+          const empty = !next.allow.length && !next.deny.length && !next.ask.length;
+          store.updateSettings({ permissions: empty ? undefined : next });
+        }}
+        placeholder={bucket === 'deny' ? 'Bash(rm -rf *)' : 'Bash(git *)'}
+        style={{ display: 'block', width: '100%', boxSizing: 'border-box', padding: SPACE(1), borderRadius: RADIUS.input, border: `1px solid ${TOKENS.border}`, background: TOKENS.surface, color: TOKENS.text, fontFamily: TOKENS.monoFont }}
+      />
+    </div>
   );
 }
 
