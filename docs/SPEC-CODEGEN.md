@@ -31,7 +31,7 @@ return <expr>
 ### Linearization
 
 1. `root` = the unique `workflow.meta` node (CF601).
-2. Build adjacency from `edges`. `findCycle(graph)` over all kinds → any cycle is CF603.
+2. Build adjacency from `edges`. `findCycle(graph)` over all kinds → any cycle is CF003.
 3. **Stable topological sort** (Kahn's): among in-degree-0 nodes, pop the one whose incoming edge
    appears earliest in `graph.edges`, else lowest `node.id`. (Mirrors `model.ts` `orderedSuccessors`.)
 4. Walk the order, emitting per kind (below).
@@ -97,8 +97,11 @@ silently emits). Path-containment (`isSafePath`) is checked first for every file
 - `.json` (the sidecar): `JSON.parse` succeeds; trailing newline.
 - `.js` (the workflow): **real parse via `acorn`** (`ecmaVersion:'latest', sourceType:'module',
   allowAwaitOutsideFunction:true`); `export const meta` present with a string `name`; exactly one
-  top-level `return` and it is the last statement; every referenced identifier resolves against
-  declared `const`/`let` bindings ∪ the globals allowlist `{ agent, pipeline, args, meta, console }`;
+  top-level `return` and it is the last statement; every referenced identifier resolves against the
+  bindings **visible in its lexical scope chain** (block/function scoped — a top-level ref to a
+  block-scoped binding does NOT resolve) ∪ the globals allowlist: the workflow runtime
+  (`agent, pipeline, args, meta, console`) plus the JS built-ins codegen can emit
+  (`JSON, Boolean, Number, String, Object, Array, Math, Promise, undefined, null, NaN, Infinity`);
   trailing newline.
 
 ## Importer (round-trip)

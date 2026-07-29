@@ -82,6 +82,20 @@ describe('workflow script structure', () => {
     expect(src).toContain('schema: {');
     expect(src.indexOf('"a"')).toBeLessThan(src.indexOf('"b"'));
   });
+
+  it('settings.model is the per-stage default; a stage model overrides it', () => {
+    const src = scriptOf(g(
+      [n.meta('meta', { name: 't', description: 'd' }),
+       n.agent('a', { prompt: 'Inherit.' }, 'inheriting'),
+       n.agent('b', { prompt: 'Override.', model: 'opus' }, 'overriding'),
+       n.ret('ret', { source: 'b', transform: 'none' })],
+      [e('meta', 'a'), e('a', 'b'), e('b', 'ret')],
+      { model: 'haiku' },
+    ));
+    // 'a' inherits the default; 'b' keeps its own.
+    expect(src).toContain('const inheriting = await agent(`Inherit.`, { model: "haiku" })');
+    expect(src).toContain('model: "opus"');
+  });
 });
 
 // ---------------------------------------------------------------------------

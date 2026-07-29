@@ -5,6 +5,7 @@ import type { WorkflowGraph } from '../schema/graph.js';
 import type {
   WorkflowNode, AgentData, PipelineData, LoopUntilCheckData, ReturnData, BranchData,
 } from '../schema/nodes.js';
+import { FIELD_PATH_RE } from '../schema/nodes.js';
 import { stableJson } from './json.js';
 import { bindingNames } from './model.js';
 import { nodeById, topoOrder, successors } from '../schema/graph-utils.js';
@@ -28,7 +29,12 @@ function resolveRef(
   const bind = names.get(id!);
   if (!bind) return null; // unresolved — CF605 blocks before emit; leave the literal visible
   if (fieldParts.length === 0) return `JSON.stringify(${bind})`;
-  return `${bind}.${fieldParts.join('.')}`;
+  // The field path is interpolated raw into JS, so it MUST be a dotted-identifier
+  // chain — never arbitrary text. A non-conforming path (e.g. `x || evil()`) is
+  // refused here and reported by CF605; leaving it a literal avoids code injection.
+  const field = fieldParts.join('.');
+  if (!FIELD_PATH_RE.test(field)) return null;
+  return `${bind}.${field}`;
 }
 
 /**
@@ -97,22 +103,44 @@ export function emitWorkflow(graph: WorkflowGraph): GeneratedFile {
     '',
   ];
 
-  // Nodes emitted nested inside a branch arm are skipped by the top-level walk.
+  // Emit every non-meta node in topo order; emitSequence handles branch nesting
+  // (arm-exclusive members are emitted inside their branch's if/else, recursively).
+  // settings.model is the default a stage inherits when it routes no model of its own.
   const armMembers = branchArmMembers(graph);
-  const nested = new Set<string>([...armMembers.values()].flatMap((a) => [...a.then, ...a.else]));
-
-  for (const id of topoOrder(graph)) {
-    const node = byId.get(id);
-    if (!node || node.kind === 'workflow.meta') continue;
-    if (nested.has(id)) continue; // emitted inside its branch arm
-    if (node.kind === 'branch') {
-      lines.push(...emitBranch(node, names, graph, armMembers.get(id)!));
-      continue;
-    }
-    lines.push(...emitStatement(node, names));
-  }
+  const ordered = topoOrder(graph).filter((id) => byId.get(id)?.kind !== 'workflow.meta');
+  lines.push(...emitSequence(ordered, names, graph, armMembers, graph.settings.model));
 
   return { path: `.claude/workflows/${graph.meta.slug}.js`, content: lines.join('\n') + '\n' };
+}
+
+/**
+ * Emit an ordered list of node ids as statements. Any node that is arm-exclusive
+ * to a branch WITHIN this list is skipped here and emitted inside that branch's
+ * if/else instead (branches recurse via emitBranch → emitSequence), so a nested
+ * branch keeps its own conditional rather than being flattened.
+ */
+function emitSequence(
+  ids: string[],
+  names: Map<string, string>,
+  graph: WorkflowGraph,
+  armMembers: Map<string, Arms>,
+  defaultModel?: string,
+): string[] {
+  const byId = nodeById(graph);
+  const nested = new Set<string>();
+  for (const id of ids) {
+    const arms = armMembers.get(id);
+    if (arms) for (const m of [...arms.then, ...arms.else]) nested.add(m);
+  }
+  const out: string[] = [];
+  for (const id of ids) {
+    if (nested.has(id)) continue; // emitted inside its enclosing branch arm
+    const node = byId.get(id);
+    if (!node || node.kind === 'workflow.meta') continue;
+    if (node.kind === 'branch') out.push(...emitBranch(node, names, graph, armMembers, defaultModel));
+    else out.push(...emitStatement(node, names, defaultModel));
+  }
+  return out;
 }
 
 /** then/else arm node-id sets per branch (strict form; see CF609). */
@@ -150,16 +178,16 @@ function emitBranch(
   node: WorkflowNode,
   names: Map<string, string>,
   graph: WorkflowGraph,
-  arms: Arms,
+  armMembers: Map<string, Arms>,
+  defaultModel?: string,
 ): string[] {
   if (node.kind !== 'branch') return [];
-  const byId = nodeById(graph);
+  const arms = armMembers.get(node.id) ?? { then: [], else: [] };
   const cond = branchCondition(node.data, names);
+  // Recurse: an arm's members are themselves a sequence, so a nested branch keeps
+  // its own if/else (B4) rather than flattening both inner arms unconditionally.
   const arm = (ids: string[]): string[] =>
-    ids
-      .map((id) => byId.get(id))
-      .filter((n): n is WorkflowNode => n !== undefined)
-      .flatMap((n) => emitStatement(n, names))
+    emitSequence(ids, names, graph, armMembers, defaultModel)
       .filter((l) => l !== '') // no blank lines inside the block
       .map((l) => '  ' + l);
   const out = [`if (${cond}) {`, ...arm(arms.then)];
@@ -168,12 +196,12 @@ function emitBranch(
   return out;
 }
 
-function emitStatement(node: WorkflowNode, names: Map<string, string>): string[] {
+function emitStatement(node: WorkflowNode, names: Map<string, string>, defaultModel?: string): string[] {
   switch (node.kind) {
     case 'agent': {
       const d = node.data as AgentData;
       const bind = names.get(node.id)!;
-      const opts = agentOpts({ schema: d.schema, label: d.label, model: d.model }, names);
+      const opts = agentOpts({ schema: d.schema, label: d.label, model: d.model ?? defaultModel }, names);
       const call = opts ? `agent(\`${renderPrompt(d.prompt, names)}\`, ${opts})` : `agent(\`${renderPrompt(d.prompt, names)}\`)`;
       return [`const ${bind} = await ${call}`, ''];
     }
@@ -181,14 +209,14 @@ function emitStatement(node: WorkflowNode, names: Map<string, string>): string[]
       const d = node.data as PipelineData;
       const bind = names.get(node.id)!;
       const sourceExpr = pipelineSource(d, names);
-      const itemOpts = agentOpts({ schema: d.itemSchema, label: d.itemLabel, model: d.model }, names, { item: 'item' });
+      const itemOpts = agentOpts({ schema: d.itemSchema, label: d.itemLabel, model: d.model ?? defaultModel }, names, { item: 'item' });
       const inner = itemOpts
         ? `agent(\`${renderPrompt(d.itemPrompt, names, { item: 'item' })}\`, ${itemOpts})`
         : `agent(\`${renderPrompt(d.itemPrompt, names, { item: 'item' })}\`)`;
       return [`const ${bind} = await pipeline(${sourceExpr}, item => ${inner})`, ''];
     }
     case 'loopUntilCheck':
-      return emitLoop(node.data as LoopUntilCheckData, names.get(node.id)!, names);
+      return emitLoop(node.data as LoopUntilCheckData, names.get(node.id)!, names, defaultModel);
     case 'output.return':
       return [`return ${returnExpr(node.data as ReturnData, names)}`];
     default:
@@ -211,9 +239,9 @@ function returnExpr(d: ReturnData, names: Map<string, string>): string {
   return expr;
 }
 
-function emitLoop(d: LoopUntilCheckData, bind: string, names: Map<string, string>): string[] {
-  const checkOpts = agentOpts({ schema: d.checkSchema, label: 'check', model: d.checkModel }, names);
-  const fixOpts = agentOpts({ label: 'fix', model: d.fixModel }, names, { check: 'JSON.stringify(check)' });
+function emitLoop(d: LoopUntilCheckData, bind: string, names: Map<string, string>, defaultModel?: string): string[] {
+  const checkOpts = agentOpts({ schema: d.checkSchema, label: 'check', model: d.checkModel ?? defaultModel }, names);
+  const fixOpts = agentOpts({ label: 'fix', model: d.fixModel ?? defaultModel }, names, { check: 'JSON.stringify(check)' });
   const checkCall = checkOpts
     ? `agent(\`${renderPrompt(d.checkPrompt, names)}\`, ${checkOpts})`
     : `agent(\`${renderPrompt(d.checkPrompt, names)}\`)`;
@@ -228,7 +256,9 @@ function emitLoop(d: LoopUntilCheckData, bind: string, names: Map<string, string
     `  const check = await ${checkCall}`,
     `  ${bind} = check`,
     `  if (check.${d.passField}) break`,
-    '  if (round > 0 && check.progress === lastProgress) break',
+    // Stall guard: only applies when the checker reports a numeric `progress`.
+    // Schemas without a progress field simply run to maxRounds (no misfire).
+    '  if (round > 0 && check.progress !== undefined && check.progress === lastProgress) break',
     '  lastProgress = check.progress',
     `  await ${fixCall}`,
     '  round++',

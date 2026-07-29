@@ -2,6 +2,7 @@
 // ("Workflow script").
 import type { Diagnostic, Rule } from '../diagnostics.js';
 import type { WorkflowNode } from '../schema/nodes.js';
+import { FIELD_PATH_RE } from '../schema/nodes.js';
 import { nodesOfKind, topoOrder } from '../schema/graph-utils.js';
 import { producesBinding } from '../codegen/model.js';
 import { DOCS_URLS, KNOWN_MODELS } from './helpers.js';
@@ -18,6 +19,20 @@ function refsIn(text: string): { raw: string; id: string; field?: string }[] {
     out.push({ raw: ref, id: id!, field: rest.length ? rest.join('.') : undefined });
   }
   return out;
+}
+
+/**
+ * Structured result-refs a node points at via its `source` fields (node ids, not
+ * template text). These become JS binding references in the emitted script exactly
+ * like prompt refs, so CF609 must scope-check them too (B2).
+ */
+function structuredRefsOf(node: WorkflowNode): { field: string; id: string }[] {
+  switch (node.kind) {
+    case 'pipeline': return [{ field: 'source', id: node.data.source }];
+    case 'branch': return [{ field: 'source', id: node.data.source }];
+    case 'output.return': return [{ field: 'source', id: node.data.source }];
+    default: return [];
+  }
 }
 
 /** Prompt-bearing fields per kind, for CF604/CF605 scanning. */
@@ -121,6 +136,12 @@ const cf605: Rule = {
       const allowedLocal = locals[n.kind] ?? new Set<string>();
       for (const { field, text } of promptsOf(n)) {
         for (const ref of refsIn(text)) {
+          // The field part is interpolated raw into JS — it must be a dotted-
+          // identifier chain, never arbitrary text (else code injection; B1).
+          if (ref.field !== undefined && !FIELD_PATH_RE.test(ref.field)) {
+            diags.push({ ruleId: 'CF605', severity: 'error', nodeId: n.id, field, message: `Template ref {{${ref.raw}}} has an invalid field path (must be a dotted identifier).`, docsUrl: DOCS_URLS.workflows });
+            continue;
+          }
           if (ref.id === 'args' || allowedLocal.has(ref.id)) continue;
           const target = byId.get(ref.id);
           if (!target) {
@@ -243,7 +264,9 @@ const cf609: Rule = {
       const exclusive = new Map<string, 'then' | 'else'>();
       for (const id of thenR) if (!elseR.has(id)) exclusive.set(id, 'then');
       for (const id of elseR) if (!thenR.has(id)) exclusive.set(id, 'else');
-      // Any node whose prompt refs an arm-exclusive node from the OTHER arm / outside.
+      // Any node that refs an arm-exclusive binding from the OTHER arm / outside —
+      // via a prompt template ref OR a structured `source` ref (return/branch/
+      // pipeline). Both compile to a binding reference that would be out of scope.
       for (const n of graph.nodes) {
         const arm = exclusive.get(n.id); // which arm n belongs to (if any)
         for (const { text } of promptsOf(n)) {
@@ -252,6 +275,12 @@ const cf609: Rule = {
             if (refArm && refArm !== arm) {
               diags.push({ ruleId: 'CF609', severity: 'error', nodeId: n.id, message: `References {{${ref.raw}}}, exclusive to the "${refArm}" arm of branch "${b.id}" — not linearizable.`, docsUrl: DOCS_URLS.workflows });
             }
+          }
+        }
+        for (const ref of structuredRefsOf(n)) {
+          const refArm = exclusive.get(ref.id);
+          if (refArm && refArm !== arm) {
+            diags.push({ ruleId: 'CF609', severity: 'error', nodeId: n.id, field: ref.field, message: `${n.kind}.${ref.field} references "${ref.id}", exclusive to the "${refArm}" arm of branch "${b.id}" — not linearizable.`, docsUrl: DOCS_URLS.workflows });
           }
         }
       }

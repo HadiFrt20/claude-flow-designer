@@ -111,6 +111,44 @@ describe('selfLint workflow script', () => {
     expect(() => selfLint([ok({ path: '.claude/workflows/x.js', content: src })])).not.toThrow();
   });
 
+  it('rejects a top-level reference to a BLOCK-scoped binding (scope-aware, B3)', () => {
+    // A flat "declared anywhere" check would false-pass this; scope-awareness must
+    // reject it (this is the guard that catches a non-linearizable branch merge).
+    const bad = [
+      'export const meta = { name: "t", description: "d" }',
+      'if (true) { const inner = await agent(`x`) }',
+      'return inner',
+      '',
+    ].join('\n');
+    expect(() => selfLint([ok({ path: '.claude/workflows/x.js', content: bad })])).toThrow(/undefined identifier "inner"/);
+  });
+
+  it('allows block-local bindings referenced within their own scope (loop pattern)', () => {
+    const src = [
+      'export const meta = { name: "t", description: "d" }',
+      'let round = 0',
+      'let out',
+      'while (round < 2) {',
+      '  const check = await agent(`c`)',
+      '  out = check',
+      '  round++',
+      '}',
+      'return out',
+      '',
+    ].join('\n');
+    expect(() => selfLint([ok({ path: '.claude/workflows/x.js', content: src })])).not.toThrow();
+  });
+
+  it('resolves destructuring bindings from an agent result', () => {
+    const src = [
+      'export const meta = { name: "t", description: "d" }',
+      'const { a, b } = await agent(`x`)',
+      'return a',
+      '',
+    ].join('\n');
+    expect(() => selfLint([ok({ path: '.claude/workflows/x.js', content: src })])).not.toThrow();
+  });
+
   it('rejects a script without a trailing newline', () => {
     const bad = validScript.trimEnd();
     expect(() => selfLint([ok({ path: '.claude/workflows/x.js', content: bad })])).toThrow(/trailing newline/);

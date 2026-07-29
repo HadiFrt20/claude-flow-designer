@@ -22,8 +22,8 @@ interface WorkflowGraph {
 }
 
 interface GlobalSettings {
-  // Workflows are self-contained scripts; most former asset settings do not apply.
-  // Reserved for future runtime hints. Kept for envelope stability.
+  model?: string; // default model for agent/pipeline/loop stages that route none of their own
+  env?: Record<string, string>; // reserved runtime env hints (not emitted into the .js today)
 }
 ```
 
@@ -74,7 +74,7 @@ Notes:
 - `pipeline.source` must resolve to a list: either `args` (used as the array) or a schema-producing
   node's `sourceField` whose JSON-Schema `type` is `array` (CF607).
 - `loopUntilCheck` expands to a `while` (a NODE), so `findCycle` still legitimately forbids graph
-  cycles (CF603).
+  cycles (CF003).
 - Branch is the **strict form**: an arm's exclusive successors may not be referenced from outside
   that arm (CF609). A node both arms reach is a join, emitted after the `if/else`.
 

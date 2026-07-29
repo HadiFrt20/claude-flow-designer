@@ -58,15 +58,25 @@ describe('bindingNames', () => {
   it('suffixes colliding names by topo index', () => {
     const graph = g(
       [n.meta('meta', { name: 't', description: 'd' }),
-       n.agent('a', { prompt: 'x' }, 'Do'),
-       n.agent('b', { prompt: 'y' }, 'Do'),
+       n.agent('a', { prompt: 'x' }, 'Run'),
+       n.agent('b', { prompt: 'y' }, 'Run'),
        n.ret('ret', { source: 'b', transform: 'none' })],
       [e('meta', 'a'), e('a', 'b'), e('b', 'ret')],
     );
     const names = bindingNames(graph);
-    expect(names.get('a')).toBe('do');
-    expect(names.get('b')).toMatch(/^do_\d+$/);
+    expect(names.get('a')).toBe('run');
+    expect(names.get('b')).toMatch(/^run_\d+$/);
     expect(names.get('a')).not.toBe(names.get('b'));
+  });
+
+  it('suffixes a reserved-word label so the binding is a valid identifier', () => {
+    const graph = g(
+      [n.meta('meta', { name: 't', description: 'd' }),
+       n.agent('a', { prompt: 'x' }, 'delete'),
+       n.ret('ret', { source: 'a', transform: 'none' })],
+      [e('meta', 'a'), e('a', 'ret')],
+    );
+    expect(bindingNames(graph).get('a')).toBe('delete_');
   });
 
   it('assigns no binding to meta / branch / return', () => {
@@ -192,6 +202,30 @@ describe('emitWorkflow', () => {
     ));
     expect(out.content).toContain('if (review.safe) {');
     expect(out.content).toContain('} else {');
+  });
+
+  it('emits a NESTED branch as its own if/else, not flattened (B4)', () => {
+    const out = file(g(
+      [n.meta('meta', { name: 't', description: 'd' }),
+       n.agent('r1', { prompt: 'root', schema: { type: 'object', properties: { a: { type: 'boolean' } } } }),
+       n.branch('b1', { source: 'r1', field: 'a' }),
+       n.agent('r2', { prompt: 'then-entry', schema: { type: 'object', properties: { b: { type: 'boolean' } } } }),
+       n.branch('b2', { source: 'r2', field: 'b' }),
+       n.agent('x', { prompt: 'inner-then' }),
+       n.agent('y', { prompt: 'inner-else' }),
+       n.agent('z', { prompt: 'outer-else' }),
+       n.ret('ret', { source: 'r1', transform: 'none' })],
+      [e('meta', 'r1'), e('r1', 'b1'),
+       e('b1', 'r2', 'then'), e('b1', 'z', 'else'),
+       e('r2', 'b2'), e('b2', 'x', 'then'), e('b2', 'y', 'else'),
+       e('b1', 'ret')],
+    ));
+    // The inner conditional survives (both inner-arm agents are guarded by r2.b),
+    // and the two nested arms are NOT emitted unconditionally side by side.
+    expect(out.content).toContain('if (r1.a) {');
+    expect(out.content).toContain('if (r2.b) {');
+    // inner-then must be nested (indented deeper than the inner if), not top-level.
+    expect(out.content).toMatch(/if \(r2\.b\) \{\n {4}const x = /);
   });
 
   it('applies the return transform (filterBoolean → .filter(Boolean))', () => {

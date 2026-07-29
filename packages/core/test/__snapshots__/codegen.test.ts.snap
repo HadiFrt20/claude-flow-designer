@@ -476,7 +476,7 @@ while (round < 2) {
 }, label: \`check\` })
   fixLoop = check
   if (check.passed) break
-  if (round > 0 && check.progress === lastProgress) break
+  if (round > 0 && check.progress !== undefined && check.progress === lastProgress) break
   lastProgress = check.progress
   await agent(\`Fix the failures reported: \${JSON.stringify(check)}.\`, { label: \`fix\` })
   round++

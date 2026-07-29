@@ -4,10 +4,10 @@ import { z } from 'zod';
 import { workflowNodeSchema } from './nodes.js';
 import type { RuleId } from './types.js';
 
-// GlobalSettings is a mostly-reserved envelope (see docs/SPEC-NODES.md). Workflow
-// codegen reads only `model` (a default for stages that don't route their own).
-// The remaining fields are retained for envelope stability + the settings panel;
-// they do not affect the emitted .js.
+// GlobalSettings (see docs/SPEC-NODES.md). Workflow codegen reads `model` as the
+// default a stage inherits when it routes no model of its own (emitWorkflow →
+// emitStatement). `env` is a reserved runtime hint retained for envelope stability
+// + the settings panel; it does not affect the emitted .js today.
 export const globalSettingsSchema = z.object({
   model: z.string().optional(),
   env: z.record(z.string(), z.string()).optional(),

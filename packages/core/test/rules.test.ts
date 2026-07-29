@@ -118,6 +118,30 @@ describe('CF605 template-ref semantics', () => {
     );
     expect(idsFor(graph)).not.toContain('CF605');
   });
+
+  it('fires on an invalid field path (code-injection guard, B1)', () => {
+    // The field part of a {{id.field}} ref is interpolated raw into JS, so a
+    // non-dotted-identifier path is a code-injection vector and must be flagged.
+    const graph = g(
+      [n.meta('meta', { name: 't', description: 'd' }),
+       n.agent('a', { prompt: 'Produce.' }),
+       n.agent('b', { prompt: 'Use {{a.x || console.log(1)}} here.' }),
+       n.ret('ret', { source: 'b', transform: 'none' })],
+      [e('meta', 'a'), e('a', 'b'), e('b', 'ret')],
+    );
+    expect(idsFor(graph)).toContain('CF605');
+  });
+
+  it('accepts a valid dotted field path', () => {
+    const graph = g(
+      [n.meta('meta', { name: 't', description: 'd' }),
+       n.agent('a', { prompt: 'Produce.', schema: { type: 'object', properties: { out: { type: 'object' } } } }),
+       n.agent('b', { prompt: 'Use {{a.out.value}} here.' }),
+       n.ret('ret', { source: 'b', transform: 'none' })],
+      [e('meta', 'a'), e('a', 'b'), e('b', 'ret')],
+    );
+    expect(idsFor(graph)).not.toContain('CF605');
+  });
 });
 
 describe('CF607 array-field check', () => {
@@ -167,6 +191,38 @@ describe('CF608 branch port cardinality', () => {
        e('br', 'approve', 'then'), e('br', 'request', 'else'), e('br', 'ret')],
     );
     expect(idsFor(graph)).not.toContain('CF608');
+  });
+});
+
+describe('CF609 arm-exclusive binding refs (B2)', () => {
+  it('fires when output.return.source targets a branch-arm-exclusive binding', () => {
+    // return.source = 'approve' (then-arm-exclusive) would compile to a ref to an
+    // out-of-scope const — a structured ref CF609 must catch, not just prompt text.
+    const graph = g(
+      [n.meta('meta', { name: 't', description: 'd' }),
+       n.agent('review', { prompt: 'Review.', schema: { type: 'object', properties: { safe: { type: 'boolean' } } } }),
+       n.branch('br', { source: 'review', field: 'safe' }),
+       n.agent('approve', { prompt: 'Approve.' }),
+       n.agent('request', { prompt: 'Request.' }),
+       n.ret('ret', { source: 'approve', transform: 'none' })],
+      [e('meta', 'review'), e('review', 'br'),
+       e('br', 'approve', 'then'), e('br', 'request', 'else'), e('br', 'ret')],
+    );
+    expect(idsFor(graph)).toContain('CF609');
+  });
+
+  it('does NOT fire when the return targets a pre-branch (in-scope) binding', () => {
+    const graph = g(
+      [n.meta('meta', { name: 't', description: 'd' }),
+       n.agent('review', { prompt: 'Review.', schema: { type: 'object', properties: { safe: { type: 'boolean' } } } }),
+       n.branch('br', { source: 'review', field: 'safe' }),
+       n.agent('approve', { prompt: 'Approve.' }),
+       n.agent('request', { prompt: 'Request.' }),
+       n.ret('ret', { source: 'review', transform: 'none' })],
+      [e('meta', 'review'), e('review', 'br'),
+       e('br', 'approve', 'then'), e('br', 'request', 'else'), e('br', 'ret')],
+    );
+    expect(idsFor(graph)).not.toContain('CF609');
   });
 });
 

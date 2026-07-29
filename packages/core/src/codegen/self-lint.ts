@@ -85,60 +85,158 @@ function lintWorkflowScript(file: GeneratedFile): void {
   if (returnCount !== 1) throw new SelfLintError(`expected exactly one top-level return, found ${returnCount}`, file.path);
   if (returnIndex !== body.length - 1) throw new SelfLintError('return is not the last statement', file.path);
 
-  // Collect bindings declared anywhere (loops/blocks declare `round`, `check`, etc.)
-  // via a shallow walk, then check top-level identifier references resolve.
-  collectNestedBindings(program, declared);
-  const unresolved = referencedIdentifiers(program).find((name) => !declared.has(name) && !GLOBALS.has(name));
+  // Scope-aware identifier resolution: every referenced identifier must resolve
+  // against a binding VISIBLE at its position (its enclosing block/function chain)
+  // ∪ the globals allowlist. A flat "declared anywhere" set would false-pass a
+  // top-level reference to a block-scoped binding (e.g. a branch arm's const), so
+  // we model lexical scope — this is what actually catches a non-linearizable
+  // branch merge escaping into the emitted `.js`.
+  const unresolved = firstUnresolved(program, [GLOBALS]);
   if (unresolved) {
     throw new SelfLintError(`references undefined identifier "${unresolved}"`, file.path);
   }
 }
 
-/** Add every declared binding name (const/let/var, params) found anywhere. */
-function collectNestedBindings(root: acorn.Node, into: Set<string>): void {
-  walk(root, (node) => {
-    if (node.type === 'VariableDeclarator') {
-      const id = (node as unknown as { id: acorn.Node }).id;
-      if (id.type === 'Identifier') into.add((id as unknown as { name: string }).name);
-    }
-    if ((node.type === 'ArrowFunctionExpression' || node.type === 'FunctionExpression') ) {
-      for (const p of (node as unknown as { params: acorn.Node[] }).params) {
-        if (p.type === 'Identifier') into.add((p as unknown as { name: string }).name);
+type Scope = Set<string>;
+
+/** Names a binding pattern introduces (Identifier + destructuring forms). */
+function patternNames(pat: acorn.Node, into: Scope): void {
+  const p = pat as unknown as Record<string, acorn.Node & { name?: string } & Record<string, unknown>>;
+  switch (pat.type) {
+    case 'Identifier':
+      into.add((pat as unknown as { name: string }).name);
+      break;
+    case 'ObjectPattern':
+      for (const prop of (p.properties as unknown as acorn.Node[]) ?? []) {
+        const pr = prop as unknown as { value?: acorn.Node; argument?: acorn.Node };
+        if (pr.value) patternNames(pr.value, into);
+        else if (pr.argument) patternNames(pr.argument, into);
       }
-    }
-  });
+      break;
+    case 'ArrayPattern':
+      for (const el of (p.elements as unknown as (acorn.Node | null)[]) ?? []) if (el) patternNames(el, into);
+      break;
+    case 'AssignmentPattern':
+      patternNames(p.left as acorn.Node, into);
+      break;
+    case 'RestElement':
+      patternNames(p.argument as acorn.Node, into);
+      break;
+  }
 }
 
-/** All identifier names used in a "value" position (best-effort, over the AST). */
-function referencedIdentifiers(root: acorn.Node): string[] {
-  const names: string[] = [];
-  walk(root, (node, parent) => {
-    if (node.type !== 'Identifier') return;
-    const name = (node as unknown as { name: string }).name;
-    // Skip declaration ids and property keys / member .field accesses.
-    if (parent) {
-      if (parent.type === 'VariableDeclarator' && (parent as unknown as { id: acorn.Node }).id === node) return;
-      if (parent.type === 'MemberExpression' && (parent as unknown as { property: acorn.Node }).property === node && !(parent as unknown as { computed: boolean }).computed) return;
-      if (parent.type === 'Property' && (parent as unknown as { key: acorn.Node }).key === node) return;
-      if ((parent.type === 'ArrowFunctionExpression' || parent.type === 'FunctionExpression') && (parent as unknown as { params: acorn.Node[] }).params.includes(node)) return;
+/** Bindings a list of statements introduces into their shared block scope. */
+function blockScope(statements: acorn.Node[]): Scope {
+  const scope: Scope = new Set();
+  const add = (stmt: acorn.Node): void => {
+    if (stmt.type === 'VariableDeclaration') {
+      for (const d of (stmt as unknown as { declarations: { id: acorn.Node }[] }).declarations) patternNames(d.id, scope);
+    } else if (stmt.type === 'FunctionDeclaration' || stmt.type === 'ClassDeclaration') {
+      const id = (stmt as unknown as { id?: { type: string; name: string } }).id;
+      if (id?.type === 'Identifier') scope.add(id.name);
+    } else if (stmt.type === 'ExportNamedDeclaration') {
+      const decl = (stmt as unknown as { declaration?: acorn.Node }).declaration;
+      if (decl) add(decl);
     }
-    names.push(name);
-  });
-  return names;
+  };
+  for (const s of statements) add(s);
+  return scope;
 }
 
-/** Minimal recursive AST walk invoking `visit(node, parent)`. */
-function walk(node: acorn.Node, visit: (n: acorn.Node, parent?: acorn.Node) => void, parent?: acorn.Node): void {
-  visit(node, parent);
+function resolves(name: string, chain: Scope[]): boolean {
+  return chain.some((s) => s.has(name));
+}
+
+/**
+ * First identifier reference that resolves against neither its lexical scope chain
+ * nor the globals, or null if every reference resolves. `chain` is outermost-first.
+ */
+function firstUnresolved(node: acorn.Node, chain: Scope[]): string | null {
+  switch (node.type) {
+    case 'Program':
+    case 'BlockStatement': {
+      const body = (node as unknown as { body: acorn.Node[] }).body;
+      const next = [...chain, blockScope(body)];
+      for (const s of body) {
+        const bad = firstUnresolved(s, next);
+        if (bad) return bad;
+      }
+      return null;
+    }
+    case 'ArrowFunctionExpression':
+    case 'FunctionExpression':
+    case 'FunctionDeclaration': {
+      const fn = node as unknown as { params: acorn.Node[]; body: acorn.Node };
+      const scope: Scope = new Set();
+      for (const p of fn.params) patternNames(p, scope);
+      const next = [...chain, scope];
+      // Param default expressions can reference earlier params.
+      for (const p of fn.params) {
+        const bad = firstUnresolvedChildrenExcept(p, next, 'left'); // skip the pattern id(s)
+        if (bad) return bad;
+      }
+      return firstUnresolved(fn.body, next);
+    }
+    case 'VariableDeclarator': {
+      // The id is a declaration (already in scope); only the init is a reference.
+      const init = (node as unknown as { init?: acorn.Node }).init;
+      return init ? firstUnresolved(init, chain) : null;
+    }
+    case 'MemberExpression': {
+      const m = node as unknown as { object: acorn.Node; property: acorn.Node; computed: boolean };
+      const bad = firstUnresolved(m.object, chain);
+      if (bad) return bad;
+      return m.computed ? firstUnresolved(m.property, chain) : null;
+    }
+    case 'Property': {
+      const pr = node as unknown as { key: acorn.Node; value: acorn.Node; computed: boolean };
+      if (pr.computed) {
+        const bad = firstUnresolved(pr.key, chain);
+        if (bad) return bad;
+      }
+      return firstUnresolved(pr.value, chain);
+    }
+    case 'Identifier': {
+      const name = (node as unknown as { name: string }).name;
+      return resolves(name, chain) ? null : name;
+    }
+    default:
+      return firstUnresolvedChildren(node, chain);
+  }
+}
+
+/** Recurse into every child node with the same scope chain. */
+function firstUnresolvedChildren(node: acorn.Node, chain: Scope[]): string | null {
   for (const key of Object.keys(node)) {
     if (key === 'type' || key === 'start' || key === 'end') continue;
     const value = (node as unknown as Record<string, unknown>)[key];
     if (Array.isArray(value)) {
-      for (const child of value) if (isNode(child)) walk(child, visit, node);
+      for (const child of value) {
+        if (isNode(child)) {
+          const bad = firstUnresolved(child, chain);
+          if (bad) return bad;
+        }
+      }
     } else if (isNode(value)) {
-      walk(value, visit, node);
+      const bad = firstUnresolved(value, chain);
+      if (bad) return bad;
     }
   }
+  return null;
+}
+
+/** Like firstUnresolvedChildren but skips one named child (a binding pattern id). */
+function firstUnresolvedChildrenExcept(node: acorn.Node, chain: Scope[], skipKey: string): string | null {
+  for (const key of Object.keys(node)) {
+    if (key === 'type' || key === 'start' || key === 'end' || key === skipKey) continue;
+    if (node.type === 'Identifier') continue; // a bare param id is a declaration
+    const value = (node as unknown as Record<string, unknown>)[key];
+    if (isNode(value)) {
+      const bad = firstUnresolved(value, chain);
+      if (bad) return bad;
+    }
+  }
+  return null;
 }
 
 function isNode(v: unknown): v is acorn.Node {

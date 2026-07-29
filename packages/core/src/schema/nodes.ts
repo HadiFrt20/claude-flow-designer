@@ -15,10 +15,15 @@ const positionSchema = z.object({ x: z.number(), y: z.number() });
  */
 const resultRefSchema = z.string();
 
-/** A dotted field path into a result object, e.g. "files" or "audit.items". */
+/**
+ * A dotted field path into a result object, e.g. "files" or "audit.items".
+ * Exported so codegen + rules validate inline `{{id.field}}` template refs with the
+ * exact same shape they enforce on structured field props (no code injection).
+ */
+export const FIELD_PATH_RE = /^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/;
 const fieldPathSchema = z
   .string()
-  .regex(/^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/, 'must be a dotted identifier path');
+  .regex(FIELD_PATH_RE, 'must be a dotted identifier path');
 
 /** An opaque JSON-Schema object, emitted verbatim (stable-key-sorted) into the script. */
 const jsonSchemaShape = z.record(z.string(), z.unknown());
