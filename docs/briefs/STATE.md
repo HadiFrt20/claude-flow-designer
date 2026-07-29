@@ -7,5 +7,5 @@ M2 | done | React Flow canvas + palette + per-kind property panels (every field)
 M3 | done | standalone web app: WebHostBridge (FS Access dir-write + zip fallback, path-safety choke point), dir import→parseProject, IndexedDB session persist, template-gallery landing; code-reviewer APPROVE; CI green
 M4 | done | VS Code extension: custom editor (canvas webview, strict CSP), postMessage HostBridge, export w/ native per-file diff-confirm, new/import/export/run commands, Claude Workflows tree view; installable .vsix; code-reviewer APPROVE; CI green (real vsce gate)
 M5 | pending |
-M6 | in-progress | PIVOT: retarget designer to Claude Code dynamic-workflow scripts (.claude/workflows/*.js); supersedes the M0–M4 .claude-asset model
+M6 | done | PIVOT: designer now targets Claude Code dynamic-workflow scripts (.claude/workflows/*.js) — 6-kind schema, workflow.ts emitter, acorn self-lint (scope-aware), CF6xx rules, sidecar round-trip, canvas + web + vscode retargeted; 288 tests, code-reviewer APPROVE; supersedes the M0–M4 asset model
 <!-- statuses: pending | in-progress | done -->

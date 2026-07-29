@@ -32,10 +32,23 @@
       deny rm -rf), session-context loader.
 
 ## M4 — VS Code extension
-- [ ] Webview custom editor for `*.clauflow.json`; theme via --vscode-* vars.
-- [ ] Commands: new / import / export (with diff-confirm) / run (terminal launch).
-- [ ] Tree view of existing workspace .claude assets → click to import.
-- [ ] `vsce package` produces installable .vsix; smoke test in Extension Host.
+- [x] Webview custom editor for `*.clauflow.json`; theme via --vscode-* vars.
+- [x] Commands: new / import / export (with diff-confirm) / run (terminal launch).
+- [x] Tree view of existing workspace assets → click to open.
+- [x] `vsce package` produces installable .vsix; smoke test in Extension Host.
+
+## M6 — Pivot to Claude Code dynamic workflows (supersedes the M0–M4 asset model)
+- [x] Schema: 6 node kinds (workflow.meta, agent, pipeline, branch, loopUntilCheck,
+      output.return); resultRefs are node ids; `{{ref}}` prompt templates.
+- [x] Codegen: `emitWorkflow` → `.claude/workflows/<slug>.js` (meta, ordered awaits,
+      pipeline fan-out, branch if/else incl. nesting, loop while, single return) +
+      `<slug>.clauflow.json` sidecar; deterministic; injection-safe interpolation.
+- [x] Self-lint: real acorn parse + scope-aware identifier resolution.
+- [x] Validation: CF001–008 retargeted + CF6xx; strict doc↔code matrix parity.
+- [x] Templates: audit-routes, summarize, test-fix, branch-review, grade-prs; fixtures
+      drift-checked.
+- [x] Importer sidecar-only (one-way `.js`); canvas + web + vscode retargeted.
+- [x] code-reviewer APPROVE (4 blockers + 2 majors fixed); 288 tests; lint clean.
 
 ## M5 — Sharing & polish
 - [ ] Plugin-bundle export target.
