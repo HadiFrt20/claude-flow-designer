@@ -4,6 +4,7 @@
 import type { WorkflowGraph, Edge, WorkflowNode, NodeKind, RuleId } from '@clauflow/core';
 import { validateGraph, exportGate, emptyGraph } from '@clauflow/core';
 import type { Diagnostic } from '@clauflow/core';
+import { layoutIfNeeded } from './layout.js';
 
 export interface EditorState {
   graph: WorkflowGraph;
@@ -31,7 +32,10 @@ export class EditorStore {
   private snapshot: EditorState;
 
   constructor(initial?: WorkflowGraph) {
-    this.graph = initial ? clone(initial) : emptyGraph('Untitled', 'untitled');
+    // Auto-layout on load: templates / imported sidecars often ship every node at
+    // {0,0}; lay them out so they don't stack at the origin (a graph the user has
+    // already arranged is left untouched — see needsLayout).
+    this.graph = initial ? layoutIfNeeded(clone(initial)) : emptyGraph('Untitled', 'untitled');
     this.snapshot = { graph: this.graph, selectedNodeId: this.selectedNodeId };
   }
 
@@ -212,7 +216,7 @@ export class EditorStore {
   replaceGraph(graph: WorkflowGraph): void {
     this.past = [];
     this.future = [];
-    this.graph = clone(graph);
+    this.graph = layoutIfNeeded(clone(graph));
     this.selectedNodeId = null;
     this.emit();
   }

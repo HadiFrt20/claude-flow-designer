@@ -144,7 +144,15 @@ export function FlowCanvas({ store }: { store: EditorStore }) {
         fitView
       >
         <Background />
-        <MiniMap nodeColor={minimapColor} pannable zoomable />
+        <MiniMap
+          nodeColor={minimapColor}
+          pannable
+          zoomable
+          // React Flow's minimap defaults to a light background; theme it so it
+          // doesn't render as a white box over the dark canvas.
+          style={{ background: TOKENS.surfaceRaised }}
+          maskColor="rgba(0,0,0,0.55)"
+        />
         <Controls />
       </ReactFlow>
     </div>
