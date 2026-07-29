@@ -346,6 +346,12 @@ const cf613: Rule = {
       check(n.id, n.data.checkModel, 'checkModel');
       check(n.id, n.data.fixModel, 'fixModel');
     }
+    // The graph-level default model propagates to every stage that routes none of
+    // its own, so a typo here would silently mis-route the whole workflow.
+    const defaultModel = graph.settings.model;
+    if (defaultModel && !KNOWN_MODELS.has(defaultModel)) {
+      diags.push({ ruleId: 'CF613', severity: 'warn', field: 'model', message: `Unknown default model "${defaultModel}" in workflow settings.`, docsUrl: DOCS_URLS.modelConfig });
+    }
     return diags;
   },
 };

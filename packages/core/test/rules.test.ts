@@ -244,3 +244,27 @@ describe('CF610 is an ackable warning', () => {
     expect(exportGate(validateGraph(graph), ['CF610']).ok).toBe(true);
   });
 });
+
+describe('CF613 covers the graph-level default model', () => {
+  it('warns on an unknown settings.model (it propagates to every stage)', () => {
+    const graph = g(
+      [n.meta('meta', { name: 't', description: 'd' }), n.agent('a', { prompt: 'x' }),
+       n.ret('ret', { source: 'a', transform: 'none' })],
+      [e('meta', 'a'), e('a', 'ret')],
+      { model: 'gpt-4' },
+    );
+    const diag = validateGraph(graph).find((d) => d.ruleId === 'CF613' && d.field === 'model' && !d.nodeId);
+    expect(diag).toBeDefined();
+    expect(diag?.message).toMatch(/default model/);
+  });
+
+  it('does NOT warn on a known settings.model', () => {
+    const graph = g(
+      [n.meta('meta', { name: 't', description: 'd' }), n.agent('a', { prompt: 'x' }),
+       n.ret('ret', { source: 'a', transform: 'none' })],
+      [e('meta', 'a'), e('a', 'ret')],
+      { model: 'opus' },
+    );
+    expect(idsFor(graph)).not.toContain('CF613');
+  });
+});
