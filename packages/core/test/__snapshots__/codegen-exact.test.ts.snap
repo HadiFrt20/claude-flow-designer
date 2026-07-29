@@ -1,0 +1,36 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`codegen output is byte-exact against committed fixtures > audit-routes: emits exactly the committed file set 1`] = `
+[
+  ".claude/workflows/audit-routes.js",
+  "audit-routes.clauflow.json",
+]
+`;
+
+exports[`codegen output is byte-exact against committed fixtures > branch-review: emits exactly the committed file set 1`] = `
+[
+  ".claude/workflows/branch-review.js",
+  "branch-review.clauflow.json",
+]
+`;
+
+exports[`codegen output is byte-exact against committed fixtures > grade-prs: emits exactly the committed file set 1`] = `
+[
+  ".claude/workflows/grade-prs.js",
+  "grade-prs.clauflow.json",
+]
+`;
+
+exports[`codegen output is byte-exact against committed fixtures > summarize: emits exactly the committed file set 1`] = `
+[
+  ".claude/workflows/summarize.js",
+  "summarize.clauflow.json",
+]
+`;
+
+exports[`codegen output is byte-exact against committed fixtures > test-fix: emits exactly the committed file set 1`] = `
+[
+  ".claude/workflows/test-fix.js",
+  "test-fix.clauflow.json",
+]
+`;

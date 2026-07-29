@@ -1,4 +1,8 @@
 node_modules/
 dist/
 *.vsix
+*.tsbuildinfo
+.isaac/
+.stryker-tmp/
+reports/
 .claude/settings.local.json

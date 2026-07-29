@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "rootDir": "src",
+    "outDir": "dist/tsc",
+    "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node", "wicg-file-system-access"],
+    "noEmit": false
+  },
+  "include": ["src/**/*"],
+  "references": [{ "path": "../core" }, { "path": "../canvas" }]
+}

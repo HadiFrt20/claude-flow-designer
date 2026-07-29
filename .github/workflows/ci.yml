@@ -6,22 +6,55 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 20, cache: npm }
+        # Node 24 (ships npm 11.x) matches the local/dev toolchain.
+        with: { node-version: 24 }
       - run: sudo apt-get update && sudo apt-get install -y shellcheck jq
-      - run: npm ci
+      # `npm ci` intermittently stalls on the runner while fetching one of the 75
+      # platform-specific optional binaries (@esbuild/*, @rollup/*) — the install
+      # is fast and reliable locally, so this is registry/runner network flakiness,
+      # not a lockfile issue. Retry a fresh attempt (a new attempt usually gets a
+      # healthy connection); each attempt is hard-capped with SIGTERM AND a
+      # --kill-after SIGKILL, because a wedged npm ignores SIGTERM (that was why an
+      # earlier `timeout 300` loop hung for the whole job). On the final failure we
+      # dump the npm debug log so a genuine stall is diagnosable, not guessed at.
+      - name: Install (npm ci)
+        timeout-minutes: 20
+        run: |
+          set +e
+          for attempt in 1 2 3; do
+            echo "::group::npm ci (attempt $attempt)"
+            timeout --kill-after=30 240 npm ci --no-audit --no-fund --loglevel=http
+            code=$?
+            echo "::endgroup::"
+            if [ "$code" -eq 0 ]; then exit 0; fi
+            echo "npm ci attempt $attempt exited $code (124/137 = timeout/kill); retrying fresh"
+            rm -rf node_modules
+          done
+          echo "::group::npm debug log (last 120 lines)"
+          tail -n 120 "$HOME"/.npm/_logs/*-debug-0.log 2>/dev/null || echo "(no debug log found)"
+          echo "::endgroup::"
+          echo "::error::npm ci failed after 3 attempts"; exit 1
       - name: Lint & typecheck
         run: npm run lint && npm run typecheck
+      - name: Build (all packages; emits dist/cli.js)
+        run: npm run build
       - name: Tests (includes validation-matrix + codegen snapshots + round-trip)
         run: npm run test
       - name: Regenerate template gallery & lint generated assets
         run: |
-          npm run -s fixtures:regen || echo "fixtures target lands in M1"
-          find fixtures -name '*.sh' -print0 2>/dev/null | xargs -0 -r shellcheck
-          find fixtures -name 'settings.json' -print0 2>/dev/null | xargs -0 -r -n1 jq empty
-          git diff --exit-code fixtures || (echo "::error::Codegen drift: commit regenerated fixtures" && exit 1)
+          # The template gallery + fixtures land in M1. Until fixtures/ exists this
+          # step is a no-op; once it does, regenerate, lint, and fail on drift.
+          if [ -d fixtures ]; then
+            npm run -s fixtures:regen || echo "fixtures target lands in M1"
+            find fixtures -name '*.sh' -print0 | xargs -0 -r shellcheck
+            find fixtures -name 'settings.json' -print0 | xargs -0 -r -n1 jq empty
+            git diff --exit-code -- fixtures || { echo "::error::Codegen drift: commit regenerated fixtures"; exit 1; }
+          else
+            echo "no fixtures/ yet (M1); skipping gallery lint"
+          fi
       - name: Validate committed graphs
         run: |
           find . -name '*.clauflow.json' -not -path './node_modules/*' -print0 \
             | xargs -0 -r -n1 node packages/core/dist/cli.js validate || echo "cli lands in M1"
-      - name: Extension package dry-run
-        run: npm run -s package:vscode -- --no-git-tag-version || echo "vsce dry-run lands in M4"
+      - name: Extension package (.vsix)
+        run: npm run -s package:vscode

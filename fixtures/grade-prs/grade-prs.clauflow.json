@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "meta": {
+    "name": "Grade PRs",
+    "slug": "grade-prs",
+    "description": "Grade each PR number passed in args"
+  },
+  "settings": {},
+  "nodes": [
+    {
+      "id": "meta",
+      "kind": "workflow.meta",
+      "label": "Grade PRs",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "name": "grade-prs",
+        "description": "Grade each PR number passed in args",
+        "argsHint": "an array of PR numbers"
+      }
+    },
+    {
+      "id": "grade",
+      "kind": "pipeline",
+      "label": "Grade PR",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "source": "args",
+        "itemPrompt": "Grade PR #{{item}} for review quality (0-10) with a one-line reason.",
+        "itemLabel": "PR {{item}}"
+      }
+    },
+    {
+      "id": "ret",
+      "kind": "output.return",
+      "label": "return",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "source": "grade",
+        "transform": "none"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "meta",
+      "target": "grade"
+    },
+    {
+      "id": "e2",
+      "source": "grade",
+      "target": "ret"
+    }
+  ]
+}

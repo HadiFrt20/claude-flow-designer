@@ -84,3 +84,29 @@ CLAUDE_EFFORT, CLAUDE_CODE_REMOTE, SLASH_COMMAND_TOOL_CHAR_BUDGET.
 ## Plugins
 Bundle: skills, subagents, commands, hooks (hooks/hooks.json), output styles, MCP server
 definitions. `${user_config.*}` substitution (exec form only for hooks).
+
+## Dynamic workflows (the codegen target from M6)
+Source: https://code.claude.com/docs/en/workflows (verify against it before touching codegen).
+A **dynamic workflow** is a JavaScript orchestration script that fans out subagents; Claude Code
+v2.1.154+, paid plans. Location `.claude/workflows/<name>.js` (project) or `~/.claude/workflows/`;
+in a plugin under `workflows/`. Invoked as `/<name>`; runs in a background runtime; resumable
+in-session; saved from the `/workflows` view (press `s`). Passes input via a global `args`.
+
+Script shape — "plain JavaScript with top-level await":
+```javascript
+export const meta = { name: 'audit-routes', description: 'Audit route handlers for auth' }
+const found = await agent('List every .ts file under src/routes/.', {
+  schema: { type: 'object', required: ['files'], properties: { files: { type: 'array', items: { type: 'string' } } } },
+})
+const audits = await pipeline(found.files, file =>
+  agent(`Audit ${file} for missing authentication checks.`, { label: file }))
+return audits.filter(Boolean)
+```
+Primitives: `agent(prompt, opts?)` spawns ONE subagent — opts seen in docs: `schema` (JSON-Schema
+for structured output), `label`, and per-stage `model` routing. `pipeline(items, fn)` runs one
+agent per item. `return` yields the final report. Runtime caps: ≤16 concurrent agents, 1000/run.
+Canonical shapes the docs list: single agent; fan-out; review/merge (agent after a pipeline);
+adversarial verify; loop-until-check ("keep fixing until a check passes or two rounds make no
+progress"). Every agent uses the session model unless the script routes a stage or
+`CLAUDE_CODE_SUBAGENT_MODEL` is set. Scripts are normally written by Claude (`ultracode` keyword /
+`/effort ultracode`); this tool generates a structured subset of them from a node graph.

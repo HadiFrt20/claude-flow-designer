@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "meta": {
+    "name": "Test Fix",
+    "slug": "test-fix",
+    "description": "Run tests and fix failures until green"
+  },
+  "settings": {},
+  "nodes": [
+    {
+      "id": "meta",
+      "kind": "workflow.meta",
+      "label": "Test Fix",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "name": "test-fix",
+        "description": "Run tests and fix failures until green"
+      }
+    },
+    {
+      "id": "loop",
+      "kind": "loopUntilCheck",
+      "label": "Fix loop",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "checkPrompt": "Run the test suite and report whether it passed.",
+        "checkSchema": {
+          "type": "object",
+          "properties": {
+            "passed": {
+              "type": "boolean"
+            },
+            "progress": {
+              "type": "number"
+            }
+          }
+        },
+        "passField": "passed",
+        "fixPrompt": "Fix the failures reported: {{check}}.",
+        "maxRounds": 2
+      }
+    },
+    {
+      "id": "ret",
+      "kind": "output.return",
+      "label": "return",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "source": "loop",
+        "transform": "none"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "meta",
+      "target": "loop"
+    },
+    {
+      "id": "e2",
+      "source": "loop",
+      "target": "ret"
+    }
+  ]
+}

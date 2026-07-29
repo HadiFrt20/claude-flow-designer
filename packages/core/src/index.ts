@@ -1,4 +1,13 @@
 export * from './schema/types.js';
+export * from './schema/nodes.js';
+export * from './schema/graph.js';
+export * from './schema/graph-utils.js';
+export * from './schema/edges.js';
+export * from './diagnostics.js';
 export * from './validate.js';
-// export { generate } from './codegen/index.js';   // M1 (must call exportGate first)
-// export { parseProject } from './importer.js';     // M1
+export { generate, ExportGateError, SelfLintError } from './codegen/index.js';
+export type { GenerateOptions } from './codegen/index.js';
+export { isSafePath, safePathSegments } from './codegen/paths.js';
+export { parseProject } from './importer.js';
+export { TEMPLATES } from './templates.js';
+export type { Template } from './templates.js';

@@ -53,6 +53,11 @@ settings.json) plus an optional headless runner script. Ships as BOTH:
 
 ## Working method
 
+Autonomy: docs/briefs/STATE.md tracks milestone status; a SessionStart hook injects it
+into every session. Saying `/next` (or "continue") executes exactly one milestone to
+acceptance, gated, then stops. `./autopilot.sh N` does N milestones headless. Never edit
+STATE.md except through that flow.
+
 Work milestone by milestone from `docs/briefs/` (M0 → M5). Each brief defines scope,
 out-of-scope, and acceptance criteria — acceptance criteria are the contract; do not mark
 a brief done without demonstrating each one. UI work follows `docs/DESIGN-BRIEF.md`.

@@ -1,0 +1,126 @@
+{
+  "version": 1,
+  "meta": {
+    "name": "Branch Review",
+    "slug": "branch-review",
+    "description": "Review a change and act on the verdict"
+  },
+  "settings": {},
+  "nodes": [
+    {
+      "id": "meta",
+      "kind": "workflow.meta",
+      "label": "Branch Review",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "name": "branch-review",
+        "description": "Review a change and act on the verdict"
+      }
+    },
+    {
+      "id": "review",
+      "kind": "agent",
+      "label": "Review",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "prompt": "Review the current diff. Report whether it is safe to merge.",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "safe": {
+              "type": "boolean"
+            }
+          }
+        },
+        "label": "review"
+      }
+    },
+    {
+      "id": "br",
+      "kind": "branch",
+      "label": "safe?",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "source": "review",
+        "field": "safe"
+      }
+    },
+    {
+      "id": "approve",
+      "kind": "agent",
+      "label": "Approve",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "prompt": "Draft an approving PR comment.",
+        "label": "approve"
+      }
+    },
+    {
+      "id": "request",
+      "kind": "agent",
+      "label": "Request changes",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "prompt": "Draft a request-changes PR comment citing {{review}}.",
+        "label": "request"
+      }
+    },
+    {
+      "id": "ret",
+      "kind": "output.return",
+      "label": "return",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "source": "review",
+        "transform": "none"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "meta",
+      "target": "review"
+    },
+    {
+      "id": "e2",
+      "source": "review",
+      "target": "br"
+    },
+    {
+      "id": "e3",
+      "source": "br",
+      "target": "approve",
+      "sourceHandle": "then"
+    },
+    {
+      "id": "e4",
+      "source": "br",
+      "target": "request",
+      "sourceHandle": "else"
+    },
+    {
+      "id": "e5",
+      "source": "br",
+      "target": "ret"
+    }
+  ]
+}
