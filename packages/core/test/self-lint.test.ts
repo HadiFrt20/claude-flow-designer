@@ -7,12 +7,23 @@ const ok = (over: Partial<GeneratedFile> & { path: string }): GeneratedFile => (
   ...over,
 });
 
+// A minimal well-formed workflow script for the "accepts valid" cases.
+const validScript = [
+  '// header',
+  'export const meta = { name: "t", description: "d" }',
+  '',
+  'const a = await agent(`Do it.`)',
+  '',
+  'return a',
+  '',
+].join('\n');
+
 describe('selfLint path containment', () => {
   const unsafe = [
     '/etc/passwd',
-    '.claude/../../escape.md',
+    '.claude/../../escape.js',
     'a//b.json',
-    '.claude\\hooks\\x.sh',
+    '.claude\\workflows\\x.js',
     '../outside.json',
   ];
   for (const p of unsafe) {
@@ -21,101 +32,87 @@ describe('selfLint path containment', () => {
     });
   }
   it('accepts a normal relative path', () => {
-    expect(() => selfLint([ok({ path: '.claude/skills/x/SKILL.md', content: '---\na: b\n---\n' })])).not.toThrow();
+    expect(() => selfLint([ok({ path: '.claude/workflows/x.js', content: validScript })])).not.toThrow();
   });
 });
 
-describe('selfLint', () => {
+describe('selfLint JSON', () => {
   it('accepts a valid JSON file', () => {
-    expect(() => selfLint([ok({ path: 'x/settings.json', content: '{"a":1}\n' })])).not.toThrow();
+    expect(() => selfLint([ok({ path: 'x.clauflow.json', content: '{"a":1}\n' })])).not.toThrow();
   });
 
   it('rejects invalid JSON with a descriptive message', () => {
-    expect(() => selfLint([ok({ path: 'x/settings.json', content: '{bad}\n' })])).toThrow(/invalid JSON/);
+    expect(() => selfLint([ok({ path: 'x.clauflow.json', content: '{bad}\n' })])).toThrow(/invalid JSON/);
   });
 
-  it('rejects frontmatter that parses to a non-mapping', () => {
-    // A YAML scalar (not an object) — exercises the "not a mapping" branch.
-    expect(() => selfLint([ok({ path: 'x/SKILL.md', content: '---\njust a string\n---\n\nbody\n' })])).toThrow(
-      /not a mapping/,
-    );
-  });
-
-  it('reports invalid YAML frontmatter distinctly from a missing block', () => {
-    expect(() =>
-      selfLint([ok({ path: 'x/SKILL.md', content: '---\nkey: "unterminated\n---\n\nbody\n' })]),
-    ).toThrow(/invalid YAML frontmatter/);
+  it('rejects JSON without a trailing newline', () => {
+    expect(() => selfLint([ok({ path: 'x.clauflow.json', content: '{"a":1}' })])).toThrow(/trailing newline/);
   });
 
   it('SelfLintError carries the file path and prefixed message', () => {
     try {
-      selfLint([ok({ path: 'deep/settings.json', content: 'nope' })]);
+      selfLint([ok({ path: 'deep/settings.clauflow.json', content: 'nope' })]);
       throw new Error('should have thrown');
     } catch (err) {
       expect(err).toBeInstanceOf(SelfLintError);
-      expect((err as SelfLintError).file).toBe('deep/settings.json');
-      expect((err as Error).message).toMatch(/^self-lint failed for deep\/settings\.json:/);
+      expect((err as SelfLintError).file).toBe('deep/settings.clauflow.json');
+      expect((err as Error).message).toMatch(/^self-lint failed for deep\/settings\.clauflow\.json:/);
     }
   });
+});
 
-  it('rejects JSON without a trailing newline', () => {
-    expect(() => selfLint([ok({ path: 'x/settings.json', content: '{"a":1}' })])).toThrow(/trailing newline/);
+describe('selfLint workflow script', () => {
+  it('accepts a well-formed script', () => {
+    expect(() => selfLint([ok({ path: '.claude/workflows/x.js', content: validScript })])).not.toThrow();
   });
 
-  it('accepts a valid markdown frontmatter file', () => {
-    expect(() =>
-      selfLint([ok({ path: 'x/SKILL.md', content: '---\ndescription: hi\n---\n\nbody\n' })]),
-    ).not.toThrow();
+  it('rejects invalid JavaScript', () => {
+    const bad = 'export const meta = { name: "t" }\nconst a = await agent(`x`\nreturn a\n';
+    expect(() => selfLint([ok({ path: '.claude/workflows/x.js', content: bad })])).toThrow(/invalid JavaScript/);
   });
 
-  it('rejects markdown without frontmatter', () => {
-    expect(() => selfLint([ok({ path: 'x/SKILL.md', content: 'no frontmatter\n' })])).toThrow(/frontmatter/);
+  it('requires an `export const meta`', () => {
+    const bad = 'const a = await agent(`x`)\nreturn a\n';
+    expect(() => selfLint([ok({ path: '.claude/workflows/x.js', content: bad })])).toThrow(/export const meta/);
   });
 
-  it('requires the jq guard + stdin read on a hook script', () => {
-    const bad = ok({ path: '.claude/hooks/x.sh', content: '#!/bin/bash\necho hi\n', executable: true });
-    expect(() => selfLint([bad])).toThrow(/jq availability guard/);
+  it('requires exactly one top-level return', () => {
+    const bad = 'export const meta = { name: "t" }\nconst a = await agent(`x`)\n';
+    expect(() => selfLint([ok({ path: '.claude/workflows/x.js', content: bad })])).toThrow(/exactly one top-level return/);
   });
 
-  it('requires hook scripts to be executable', () => {
-    const bad = ok({
-      path: '.claude/hooks/x.sh',
-      content: '#!/bin/bash\ncommand -v jq >/dev/null || exit 1\ninput=$(cat)\n',
-      executable: false,
-    });
-    expect(() => selfLint([bad])).toThrow(/executable/);
+  it('requires the return to be the last statement', () => {
+    const bad = [
+      'export const meta = { name: "t" }',
+      'return 1',
+      'const a = await agent(`x`)',
+      '',
+    ].join('\n');
+    expect(() => selfLint([ok({ path: '.claude/workflows/x.js', content: bad })])).toThrow(/not the last statement/);
   });
 
-  it('does NOT require jq guard on run.sh (not a hook script)', () => {
-    const run = ok({ path: 'run.sh', content: '#!/bin/bash\nset -euo pipefail\nclaude -p go\n', executable: true });
-    expect(() => selfLint([run])).not.toThrow();
+  it('rejects a reference to an undefined identifier', () => {
+    const bad = [
+      'export const meta = { name: "t" }',
+      'const a = await agent(`x`)',
+      'return somethingUndeclared',
+      '',
+    ].join('\n');
+    expect(() => selfLint([ok({ path: '.claude/workflows/x.js', content: bad })])).toThrow(/undefined identifier/);
   });
 
-  it('requires a shebang on scripts', () => {
-    const bad = ok({ path: 'run.sh', content: 'claude -p go\n', executable: true });
-    expect(() => selfLint([bad])).toThrow(/shebang/);
+  it('allows the workflow runtime globals + JS built-ins', () => {
+    const src = [
+      'export const meta = { name: "t", description: "d" }',
+      'const items = await pipeline(args, item => agent(`Do ${item}.`))',
+      'return items.filter(Boolean)',
+      '',
+    ].join('\n');
+    expect(() => selfLint([ok({ path: '.claude/workflows/x.js', content: src })])).not.toThrow();
   });
 
-  it('reports the hook stdin-read requirement distinctly from the jq guard', () => {
-    const bad = ok({
-      path: '.claude/hooks/x.sh',
-      content: '#!/bin/bash\ncommand -v jq >/dev/null || exit 1\necho hi\n',
-      executable: true,
-    });
-    expect(() => selfLint([bad])).toThrow(/stdin read/);
-  });
-
-  it('rejects JSON trailing-newline with the specific message', () => {
-    expect(() => selfLint([ok({ path: 'x/settings.json', content: '{}' })])).toThrow(/trailing newline/);
-  });
-
-  it('re-throws a nested SelfLintError unchanged (does not wrap twice)', () => {
-    // A markdown file with malformed frontmatter: the inner catch must rethrow the
-    // SelfLintError (the "err instanceof SelfLintError" branch), not wrap it.
-    try {
-      selfLint([ok({ path: 'x/SKILL.md', content: '---\n123\n---\n\nbody\n' })]);
-    } catch (err) {
-      expect((err as Error).message).not.toMatch(/self-lint failed.*self-lint failed/);
-    }
+  it('rejects a script without a trailing newline', () => {
+    const bad = validScript.trimEnd();
+    expect(() => selfLint([ok({ path: '.claude/workflows/x.js', content: bad })])).toThrow(/trailing newline/);
   });
 });

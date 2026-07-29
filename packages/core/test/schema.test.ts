@@ -8,11 +8,16 @@ import {
   workflowGraphSchema,
 } from '../src/schema/graph.js';
 import { workflowNodeSchema, NODE_KINDS } from '../src/schema/nodes.js';
-import { fixtures } from './fixtures.js';
+import { fixtures, valid } from './fixtures.js';
 
 describe('WorkflowGraph schema', () => {
-  it('parses a minimal graph', () => {
+  it('parses a minimal (empty) graph', () => {
     const graph = emptyGraph('My Flow', 'my-flow');
+    expect(parseGraph(graph)).toEqual(graph);
+  });
+
+  it('parses a full valid workflow', () => {
+    const graph = valid();
     expect(parseGraph(graph)).toEqual(graph);
   });
 
@@ -24,7 +29,7 @@ describe('WorkflowGraph schema', () => {
   it('rejects an unknown node kind', () => {
     const bad = {
       ...emptyGraph('x', 'x'),
-      nodes: [{ id: 'a', kind: 'trigger.telepathy', label: 'x', position: { x: 0, y: 0 }, data: {} }],
+      nodes: [{ id: 'a', kind: 'agent.telepathy', label: 'x', position: { x: 0, y: 0 }, data: {} }],
     };
     expect(safeParseGraph(bad).success).toBe(false);
   });
@@ -46,14 +51,29 @@ describe('WorkflowGraph schema', () => {
     expect(unionKinds).toEqual([...NODE_KINDS].sort());
   });
 
-  it('validates a placeholder $N', () => {
-    const node = {
-      id: 'c', kind: 'trigger.slashCommand', label: 'c', position: { x: 0, y: 0 },
-      data: { name: 'x', description: 'd', args: [{ name: 'a', placeholder: '$0' }] },
+  it('applies schema defaults on optional fields', () => {
+    // return.transform defaults to 'none'; loop.passField to 'passed', maxRounds to 2.
+    const ret = workflowNodeSchema.parse({
+      id: 'r', kind: 'output.return', label: 'r', position: { x: 0, y: 0 }, data: { source: 'a' },
+    });
+    if (ret.kind !== 'output.return') throw new Error('kind');
+    expect(ret.data.transform).toBe('none');
+
+    const loop = workflowNodeSchema.parse({
+      id: 'l', kind: 'loopUntilCheck', label: 'l', position: { x: 0, y: 0 },
+      data: { checkPrompt: 'c', fixPrompt: 'f' },
+    });
+    if (loop.kind !== 'loopUntilCheck') throw new Error('kind');
+    expect(loop.data.passField).toBe('passed');
+    expect(loop.data.maxRounds).toBe(2);
+  });
+
+  it('rejects a fieldPath that is not a dotted identifier', () => {
+    const bad = {
+      id: 'r', kind: 'output.return', label: 'r', position: { x: 0, y: 0 },
+      data: { source: 'a', field: '1bad-field' },
     };
-    expect(workflowNodeSchema.safeParse(node).success).toBe(true);
-    const badPlaceholder = { ...node, data: { ...node.data, args: [{ name: 'a', placeholder: '$x' }] } };
-    expect(workflowNodeSchema.safeParse(badPlaceholder).success).toBe(false);
+    expect(workflowNodeSchema.safeParse(bad).success).toBe(false);
   });
 
   it('exposes the top-level schema for host consumers', () => {

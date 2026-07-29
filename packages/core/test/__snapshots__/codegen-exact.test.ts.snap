@@ -1,41 +1,36 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`codegen output is byte-exact against committed fixtures > pr-review: emits exactly the committed file set 1`] = `
+exports[`codegen output is byte-exact against committed fixtures > audit-routes: emits exactly the committed file set 1`] = `
 [
-  ".claude/settings.json",
-  ".claude/skills/pr-review/SKILL.md",
-  "flow.clauflow.json",
+  ".claude/workflows/audit-routes.js",
+  "audit-routes.clauflow.json",
 ]
 `;
 
-exports[`codegen output is byte-exact against committed fixtures > security-gate: emits exactly the committed file set 1`] = `
+exports[`codegen output is byte-exact against committed fixtures > branch-review: emits exactly the committed file set 1`] = `
 [
-  ".claude/hooks/pretooluse-1.sh",
-  ".claude/settings.json",
-  "flow.clauflow.json",
+  ".claude/workflows/branch-review.js",
+  "branch-review.clauflow.json",
 ]
 `;
 
-exports[`codegen output is byte-exact against committed fixtures > session-context-loader: emits exactly the committed file set 1`] = `
+exports[`codegen output is byte-exact against committed fixtures > grade-prs: emits exactly the committed file set 1`] = `
 [
-  ".claude/hooks/sessionstart-1.sh",
-  ".claude/settings.json",
-  "flow.clauflow.json",
+  ".claude/workflows/grade-prs.js",
+  "grade-prs.clauflow.json",
 ]
 `;
 
-exports[`codegen output is byte-exact against committed fixtures > smart-commit: emits exactly the committed file set 1`] = `
+exports[`codegen output is byte-exact against committed fixtures > summarize: emits exactly the committed file set 1`] = `
 [
-  ".claude/settings.json",
-  ".claude/skills/smart-commit/SKILL.md",
-  "flow.clauflow.json",
+  ".claude/workflows/summarize.js",
+  "summarize.clauflow.json",
 ]
 `;
 
-exports[`codegen output is byte-exact against committed fixtures > test-fix-loop: emits exactly the committed file set 1`] = `
+exports[`codegen output is byte-exact against committed fixtures > test-fix: emits exactly the committed file set 1`] = `
 [
-  ".claude/settings.json",
-  "flow.clauflow.json",
-  "run.sh",
+  ".claude/workflows/test-fix.js",
+  "test-fix.clauflow.json",
 ]
 `;

@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "meta": {
+    "name": "Audit Routes",
+    "slug": "audit-routes",
+    "description": "Audit route handlers for missing auth"
+  },
+  "settings": {},
+  "nodes": [
+    {
+      "id": "meta",
+      "kind": "workflow.meta",
+      "label": "Audit Routes",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "name": "audit-routes",
+        "description": "Audit route handlers for missing auth"
+      }
+    },
+    {
+      "id": "list",
+      "kind": "agent",
+      "label": "List routes",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "prompt": "List every .ts file under src/routes/.",
+        "schema": {
+          "type": "object",
+          "required": [
+            "files"
+          ],
+          "properties": {
+            "files": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "audit",
+      "kind": "pipeline",
+      "label": "Audit routes",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "source": "list",
+        "sourceField": "files",
+        "itemPrompt": "Audit {{item}} for missing authentication checks.",
+        "itemLabel": "{{item}}"
+      }
+    },
+    {
+      "id": "ret",
+      "kind": "output.return",
+      "label": "return",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "source": "audit",
+        "transform": "filterBoolean"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "meta",
+      "target": "list"
+    },
+    {
+      "id": "e2",
+      "source": "list",
+      "target": "audit"
+    },
+    {
+      "id": "e3",
+      "source": "audit",
+      "target": "ret"
+    }
+  ]
+}

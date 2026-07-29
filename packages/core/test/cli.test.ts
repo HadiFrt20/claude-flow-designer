@@ -40,22 +40,22 @@ describe('clauflow validate', () => {
     expect(run(['validate', p])).toBe(2);
   });
 
-  it('exits 1 on a graph with a blocking error (CF101)', () => {
-    const p = write('cf101.clauflow.json', serializeGraph(fixtures.CF101.hit));
+  it('exits 1 on a graph with a blocking error (CF602)', () => {
+    const p = write('cf602.clauflow.json', serializeGraph(fixtures.CF602.hit));
     expect(run(['validate', p])).toBe(1);
   });
 
-  it('exits 0 after applying the CF101 quick fix to the failing graph', () => {
-    // Acceptance criterion #2: fail a CF101 graph, then pass it after applying
-    // the rule's own quick fix (not a hand-authored fixed fixture).
-    const failing = fixtures.CF101.hit;
-    const before = write('cf101.clauflow.json', serializeGraph(failing));
+  it('exits 0 after applying the CF602 quick fix to the failing graph', () => {
+    // Acceptance criterion: fail a CF602 graph (invalid /command slug), then pass
+    // it after applying the rule's own quick fix (derive name from graph.slug).
+    const failing = fixtures.CF602.hit;
+    const before = write('cf602.clauflow.json', serializeGraph(failing));
     expect(run(['validate', before])).toBe(1);
 
-    const diag = validateGraph(failing).find((d) => d.ruleId === 'CF101' && d.quickFix);
+    const diag = validateGraph(failing).find((d) => d.ruleId === 'CF602' && d.quickFix);
     expect(diag?.quickFix).toBeDefined();
     const fixed = diag!.quickFix!.apply(failing);
-    const after = write('cf101-fixed.clauflow.json', serializeGraph(fixed));
+    const after = write('cf602-fixed.clauflow.json', serializeGraph(fixed));
     expect(run(['validate', after])).toBe(0);
   });
 

@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "meta": {
+    "name": "Summarize",
+    "slug": "summarize",
+    "description": "Summarize the input in three bullets"
+  },
+  "settings": {},
+  "nodes": [
+    {
+      "id": "meta",
+      "kind": "workflow.meta",
+      "label": "Summarize",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "name": "summarize",
+        "description": "Summarize the input in three bullets",
+        "argsHint": "the text to summarize"
+      }
+    },
+    {
+      "id": "sum",
+      "kind": "agent",
+      "label": "Summarize",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "prompt": "Summarize the following in three bullets:\n{{args}}",
+        "label": "summarize"
+      }
+    },
+    {
+      "id": "ret",
+      "kind": "output.return",
+      "label": "return",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "source": "sum",
+        "transform": "none"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "meta",
+      "target": "sum"
+    },
+    {
+      "id": "e2",
+      "source": "sum",
+      "target": "ret"
+    }
+  ]
+}
