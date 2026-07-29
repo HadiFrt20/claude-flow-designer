@@ -52,7 +52,7 @@ describe('WebHostBridge.writeFiles — File System Access path', () => {
     const store = new Map<string, string>();
     (globalThis as { showDirectoryPicker: unknown }).showDirectoryPicker = async () => new FakeDirHandle(store);
 
-    const files = generate(TEMPLATES.find((t) => t.slug === 'security-gate')!.graph);
+    const files = generate(TEMPLATES.find((t) => t.slug === 'audit-routes')!.graph);
     const bridge = new WebHostBridge(ui);
     const res = await bridge.writeFiles(files);
 
@@ -75,38 +75,29 @@ describe('WebHostBridge.writeFiles — File System Access path', () => {
     await expect(bridge.writeFiles([{ path: '.claude/../../escape', content: 'x' }])).rejects.toThrow(/unsafe/);
     expect(store.size).toBe(0); // nothing written anywhere
   });
-
-  it('warns how to restore the exec bit after a directory write (FS API cannot chmod)', async () => {
-    const store = new Map<string, string>();
-    (globalThis as { showDirectoryPicker: unknown }).showDirectoryPicker = async () => new FakeDirHandle(store);
-    // security-gate emits an executable hook script.
-    const files = generate(TEMPLATES.find((t) => t.slug === 'security-gate')!.graph);
-    await new WebHostBridge(ui).writeFiles(files);
-    expect(ui.notify).toHaveBeenCalledWith('warn', expect.stringMatching(/chmod \+x/));
-  });
 });
 
 describe('WebHostBridge.readProject — import round-trip', () => {
-  it('reads a written .claude tree back and parses an equivalent graph', async () => {
+  it('reads a written workflow back and parses an equivalent graph (via the sidecar)', async () => {
     const store = new Map<string, string>();
     (globalThis as { showDirectoryPicker: unknown }).showDirectoryPicker = async () => new FakeDirHandle(store);
 
-    // Seed the store with a template's export (incl. flow.clauflow.json).
-    const template = TEMPLATES.find((t) => t.slug === 'pr-review')!;
+    // Seed the store with a template's export (incl. the .clauflow.json sidecar).
+    const template = TEMPLATES.find((t) => t.slug === 'audit-routes')!;
     for (const f of generate(template.graph)) store.set(f.path, f.content);
 
     const bridge = new WebHostBridge(ui);
     const graph = await bridge.readProject();
-    // flow.clauflow.json is present, so the importer round-trips exactly.
+    // The sidecar is present, so the importer round-trips exactly.
     expect(graph).toEqual(template.graph);
   });
 
-  it('returns null when the folder has no .claude assets', async () => {
+  it('returns null when the folder has no workflow sidecar', async () => {
     const store = new Map<string, string>([['README.md', '# hi']]);
     (globalThis as { showDirectoryPicker: unknown }).showDirectoryPicker = async () => new FakeDirHandle(store);
     const bridge = new WebHostBridge(ui);
     expect(await bridge.readProject()).toBeNull();
-    expect(ui.notify).toHaveBeenCalledWith('warn', expect.stringMatching(/No \.claude assets/));
+    expect(ui.notify).toHaveBeenCalledWith('warn', expect.stringMatching(/No \.clauflow\.json/));
   });
 });
 

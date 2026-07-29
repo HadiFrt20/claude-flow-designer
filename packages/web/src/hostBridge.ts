@@ -55,9 +55,7 @@ export class WebHostBridge implements HostBridge {
 
     const written: string[] = [];
     const errors: string[] = [];
-    let anyExecutable = false;
     for (const { segments, file } of entries) {
-      if (file.executable) anyExecutable = true;
       try {
         let dir = root;
         for (const seg of segments.slice(0, -1)) {
@@ -74,10 +72,6 @@ export class WebHostBridge implements HostBridge {
       }
     }
     this.ui.notify(errors.length ? 'warn' : 'info', `Wrote ${written.length}/${total} files.`);
-    // The File System Access API can't set the exec bit; tell the user how.
-    if (anyExecutable && errors.length === 0) {
-      this.ui.notify('warn', 'Mark hook scripts executable: chmod +x .claude/hooks/*.sh run.sh');
-    }
     return { written, skipped: [], errors };
   }
 
@@ -92,7 +86,7 @@ export class WebHostBridge implements HostBridge {
     this.ui.notify('info', `Downloaded ${files.length} files as clauflow-export.zip.`);
   }
 
-  /** Import: pick a directory, read the .claude assets, parse into a graph. */
+  /** Import: pick a directory, read the workflow sidecar(s), parse into a graph. */
   async readProject(): Promise<WorkflowGraph | null> {
     if (!supportsFileSystemAccess()) {
       this.ui.notify('error', 'Importing a folder needs a Chromium-based browser (File System Access API).');
@@ -107,7 +101,7 @@ export class WebHostBridge implements HostBridge {
     }
     const files = await collectImportable(root, '');
     if (files.length === 0) {
-      this.ui.notify('warn', 'No .claude assets found in that folder.');
+      this.ui.notify('warn', 'No .clauflow.json workflow found in that folder.');
       return null;
     }
     return parseProject(files);

@@ -19,7 +19,6 @@ import {
   changesToWrite,
   collectWorkspaceAssets,
   detectAssets,
-  runnerCommand,
   type FsAccess,
   type FileChange,
 } from './host-fs.js';
@@ -281,6 +280,8 @@ async function runActiveGraph(): Promise<void> {
   if (!(await requireTrust('run the workflow'))) return;
   const graph = await activeGraph();
   if (!graph) return;
+  // Generate first: this runs the export gate, so an invalid workflow surfaces
+  // its blocking diagnostics here rather than failing silently at invocation.
   let files: GeneratedFile[];
   try {
     files = generate(graph);
@@ -288,12 +289,22 @@ async function runActiveGraph(): Promise<void> {
     notify('error', String(err));
     return;
   }
-  const cmd = runnerCommand(files);
-  if (!cmd) {
-    notify('warn', 'This workflow has no headless runner (add a headless trigger or enable it in settings).');
+  // Write the emitted .claude/workflows/<slug>.js, then invoke it as /<name> in
+  // a Claude Code terminal (dynamic workflows run via their slash command).
+  const fs = workspaceFs();
+  if (!fs) {
+    notify('error', 'Open a folder to run the workflow into.');
     return;
   }
-  runInTerminal(cmd);
+  for (const f of files) await fs.write(f.path, f.content);
+  const name = workflowName(graph);
+  runInTerminal(`claude "/${name}"`);
+}
+
+/** The `/command` name of a workflow: its meta.name if present, else the slug. */
+function workflowName(graph: WorkflowGraph): string {
+  const meta = graph.nodes.find((n) => n.kind === 'workflow.meta');
+  return meta?.kind === 'workflow.meta' ? meta.data.name : graph.meta.slug;
 }
 
 // --- shared host operations -------------------------------------------------
@@ -421,16 +432,17 @@ class AssetsTreeProvider implements vscode.TreeDataProvider<AssetItem> {
     const detected = detectAssets(await fs.list('.'));
     if (!item) {
       return [
-        group('Skills', detected.skills),
-        group('Subagents', detected.agents),
-        group('Hooks', detected.hooks),
+        group('Workflows', detected.workflows),
         group('Graphs', detected.graphs),
       ].filter((g): g is AssetItem => g !== null);
     }
     return (item.children ?? []).map((p) => {
       const leaf = new AssetItem(p, vscode.TreeItemCollapsibleState.None);
-      leaf.command = { command: 'claudeFlow.import', title: 'Import' };
-      leaf.resourceUri = fileUri(p);
+      const uri = fileUri(p);
+      // Open the file: a .clauflow.json sidecar opens in the registered canvas
+      // editor; a .js workflow opens as text (it is one-way output).
+      if (uri) leaf.command = { command: 'vscode.open', title: 'Open', arguments: [uri] };
+      leaf.resourceUri = uri;
       return leaf;
     });
   }

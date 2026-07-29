@@ -17,7 +17,7 @@ import {
 } from '@xyflow/react';
 import { useEditor } from '../useEditor.js';
 import type { EditorStore } from '../store.js';
-import { edgeAllowed, isTrigger, type WorkflowNode } from '@clauflow/core';
+import { edgeAllowed, isRoot, type WorkflowNode } from '@clauflow/core';
 import { ACCENT, CATEGORY_GLYPH, categoryOf, TOKENS, SPACE, SEVERITY_ICON, SEVERITY_COLOR } from '../tokens.js';
 
 interface NodeData extends Record<string, unknown> {
@@ -28,10 +28,10 @@ interface NodeData extends Record<string, unknown> {
 function CFNode({ data }: { data: NodeData }) {
   const { node, worst } = data;
   const cat = categoryOf(node.kind);
-  // Triggers are graph entry points (source only); output.decision is a terminal
+  // workflow.meta is the entry point (source only); output.return is a terminal
   // (target only); every other kind can both receive and emit an edge.
-  const hasTarget = !isTrigger(node);
-  const hasSource = node.kind !== 'output.decision';
+  const hasTarget = !isRoot(node);
+  const hasSource = node.kind !== 'output.return';
   const dotStyle = { width: 8, height: 8, background: ACCENT[cat], border: 'none' };
   return (
     <div

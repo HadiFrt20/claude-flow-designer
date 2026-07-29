@@ -2,18 +2,9 @@
 // EVERY data field (DoD requirement), grouped Basic / Advanced (DESIGN-BRIEF).
 // The React PropertyPanel renders these generically, so adding a schema field =
 // adding a row here (no bespoke component). Field keys match the zod data schema.
-import type { NodeKind, HookEvent } from '@clauflow/core';
-
-// All hook events, for the event select and the frontmatterHooks multi-select.
-const HOOK_EVENTS: readonly HookEvent[] = [
-  'SessionStart', 'Setup', 'InstructionsLoaded', 'UserPromptSubmit',
-  'UserPromptExpansion', 'PreToolUse', 'PermissionRequest', 'PermissionDenied',
-  'PostToolUse', 'PostToolUseFailure', 'PostToolBatch', 'Notification',
-  'MessageDisplay', 'SubagentStart', 'SubagentStop', 'TaskCreated',
-  'TaskCompleted', 'Stop', 'StopFailure', 'TeammateIdle', 'ConfigChange',
-  'CwdChanged', 'FileChanged', 'WorktreeCreate', 'WorktreeRemove',
-  'PreCompact', 'PostCompact', 'Elicitation', 'ElicitationResult', 'SessionEnd',
-];
+//
+// M6: the graph models a Claude Code dynamic workflow (.claude/workflows/<slug>.js).
+import type { NodeKind } from '@clauflow/core';
 
 export type FieldType =
   | 'text'
@@ -21,167 +12,95 @@ export type FieldType =
   | 'number'
   | 'boolean'
   | 'select'
-  | 'multiSelect' // set of options → string[] (e.g. frontmatterHooks)
   | 'model' // model picker (known aliases + free text)
-  | 'effort'
-  | 'stringList' // comma/newline list → string[]
-  | 'keyValue' // `key: value` lines → Record<string,string> (e.g. http headers)
-  | 'argList' // positional args → {name, placeholder}[]
-  | 'json' // arbitrary object literal (e.g. mcp input, updatedInput)
-  | 'matcher' // tool matcher with syntax help
-  | 'permissionRule'; // e.g. Bash(git *)
+  | 'resultRef' // reference to a producing node id (or 'args')
+  | 'fieldPath' // dotted identifier path into a result
+  | 'transform' // return transform: none | filterBoolean | flatten
+  | 'json'; // arbitrary object literal (e.g. an agent schema)
 
 export interface FieldDescriptor {
-  /** Data key (dotted allowed for nested, but M2 fields are flat). */
+  /** Data key (dotted allowed for nested, but M6 fields are flat). */
   key: string;
   label: string;
   type: FieldType;
   group: 'Basic' | 'Advanced';
   /** Human help — copy names things by what users control (DESIGN-BRIEF). */
   hint?: string;
-  options?: readonly string[]; // for select
+  options?: readonly string[]; // for select / transform
   placeholder?: string;
 }
 
-const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+const TRANSFORMS = ['none', 'filterBoolean', 'flatten'] as const;
 
-// Common model/effort rows reused by several kinds.
-const MODEL: FieldDescriptor = { key: 'model', label: 'Model', type: 'model', group: 'Advanced', hint: 'Alias (sonnet, opus) or full id. Blank = inherit.' };
-const EFFORT: FieldDescriptor = { key: 'effort', label: 'Effort', type: 'effort', group: 'Advanced', options: EFFORTS, hint: 'xhigh/max run via the CLI flag, not settings.json.' };
+// A per-stage model picker, reused by agent / pipeline / loop.
+const MODEL: FieldDescriptor = { key: 'model', label: 'Model', type: 'model', group: 'Advanced', hint: 'Alias (sonnet, opus) or full id. Blank = inherit the workflow default.' };
 
 export const FIELD_DESCRIPTORS: Record<NodeKind, FieldDescriptor[]> = {
-  'trigger.slashCommand': [
-    { key: 'name', label: 'Command name', type: 'text', group: 'Basic', hint: 'Becomes /<name> and the skill folder.' },
-    { key: 'description', label: 'Description', type: 'textarea', group: 'Basic', hint: 'Shown to Claude for auto-invocation; keep it tight.' },
-    { key: 'argumentHint', label: 'Argument hint', type: 'text', group: 'Basic', placeholder: '[issue] [priority]' },
-    { key: 'args', label: 'Arguments', type: 'argList', group: 'Advanced', hint: 'Positional args: name + placeholder ($0..$9 or $ARGUMENTS).' },
-    { key: 'disableModelInvocation', label: 'Manual-only (no auto-invoke)', type: 'boolean', group: 'Advanced' },
-    { key: 'contextFork', label: 'Run in a forked context', type: 'boolean', group: 'Advanced' },
-    { key: 'agent', label: 'Delegate to subagent', type: 'text', group: 'Advanced', hint: 'Name of a subagent node to hand the whole command to.' },
-    MODEL,
-    EFFORT,
+  'workflow.meta': [
+    { key: 'name', label: 'Command name', type: 'text', group: 'Basic', hint: 'Becomes /<name>; the file is <slug>.js.' },
+    { key: 'description', label: 'Description', type: 'textarea', group: 'Basic', hint: 'export const meta.description — shown when the workflow is listed.' },
+    { key: 'argsHint', label: 'Args hint', type: 'text', group: 'Advanced', placeholder: 'an array of PR numbers', hint: 'Doc-only: what `args` is at invocation.' },
   ],
-  'trigger.hookEvent': [
-    { key: 'event', label: 'Event', type: 'select', group: 'Basic', options: HOOK_EVENTS, hint: 'Lifecycle event, e.g. PreToolUse.' },
-    { key: 'matcher', label: 'Matcher', type: 'matcher', group: 'Basic', hint: 'Tool name / list / regex. For MCP use mcp__server__.*' },
-    { key: 'scope', label: 'Scope', type: 'select', group: 'Advanced', options: ['project', 'user', 'local'], hint: 'local → settings.local.json (machine-specific).' },
-  ],
-  'trigger.sessionStart': [
-    { key: 'matcher', label: 'Fires on', type: 'select', group: 'Basic', options: ['startup', 'resume', 'clear', 'compact', 'fork'] },
-  ],
-  'trigger.headless': [
-    { key: 'promptTemplate', label: 'Prompt', type: 'textarea', group: 'Basic', hint: 'The claude -p prompt. Supports $ARGUMENTS, $0..$9.' },
-    { key: 'initMode', label: 'Init mode', type: 'select', group: 'Advanced', options: ['init', 'init-only', 'maintenance'] },
-    { key: 'schedule', label: 'Schedule (doc-only)', type: 'text', group: 'Advanced', placeholder: '0 9 * * 1' },
-  ],
-  'step.prompt': [
-    { key: 'body', label: 'Prompt body', type: 'textarea', group: 'Basic', hint: 'Markdown. Placeholders $ARGUMENTS, $0..$9 are preserved.' },
-    MODEL,
-    EFFORT,
-  ],
-  'step.shell': [
-    { key: 'command', label: 'Command', type: 'text', group: 'Basic', hint: 'Shell command to run.' },
-    { key: 'embedOutput', label: 'Embed output in prompt', type: 'boolean', group: 'Basic', hint: 'On → !`cmd` under a Context heading. Off → standalone script.' },
-    { key: 'scriptBody', label: 'Script body', type: 'textarea', group: 'Advanced', hint: 'For standalone scripts.' },
-  ],
-  'step.fileRef': [
-    { key: 'paths', label: 'File paths', type: 'stringList', group: 'Basic', hint: 'One per line → @path references.' },
-  ],
-  'step.subagent': [
-    { key: 'name', label: 'Subagent name', type: 'text', group: 'Basic', hint: 'Becomes .claude/agents/<name>.md.' },
-    { key: 'description', label: 'Description', type: 'textarea', group: 'Basic', hint: 'When Claude should delegate to it (required to auto-delegate).' },
-    { key: 'systemPrompt', label: 'System prompt', type: 'textarea', group: 'Basic' },
-    { key: 'tools', label: 'Allowed tools', type: 'stringList', group: 'Advanced', hint: 'Blank = inherit all.' },
-    { key: 'frontmatterHooks', label: 'Frontmatter hooks', type: 'multiSelect', group: 'Advanced', options: HOOK_EVENTS, hint: 'A Stop hook here auto-converts to SubagentStop (CF303).' },
-    MODEL,
-    EFFORT,
-  ],
-  'step.mcpTool': [
-    { key: 'server', label: 'MCP server', type: 'text', group: 'Basic', hint: 'Plugin-scoped: plugin:<plugin>:<server>.' },
-    { key: 'tool', label: 'Tool', type: 'text', group: 'Basic' },
-    { key: 'input', label: 'Input', type: 'json', group: 'Advanced', hint: 'JSON object; supports ${tool_input.*} substitution.' },
-  ],
-  'hook.command': [
-    { key: 'command', label: 'Command', type: 'text', group: 'Basic', hint: 'Use exec form (args) when a path placeholder is involved.' },
-    { key: 'args', label: 'Args (exec form)', type: 'stringList', group: 'Basic' },
-    { key: 'scriptBody', label: 'Inline script', type: 'textarea', group: 'Basic', hint: 'Inner logic only — codegen adds the shebang, jq guard and stdin read.' },
-    { key: 'timeout', label: 'Timeout (s)', type: 'number', group: 'Advanced' },
-    { key: 'statusMessage', label: 'Status message', type: 'text', group: 'Advanced' },
-    { key: 'shell', label: 'Shell', type: 'select', group: 'Advanced', options: ['bash', 'powershell'] },
-    { key: 'async', label: 'Run async', type: 'boolean', group: 'Advanced' },
-    { key: 'asyncRewake', label: 'Rewake when async completes', type: 'boolean', group: 'Advanced' },
-    { key: 'once', label: 'Once per session', type: 'boolean', group: 'Advanced', hint: 'Only honoured in skill frontmatter (ignored on settings.json hooks).' },
-    { key: 'if', label: 'Condition (permission rule)', type: 'permissionRule', group: 'Advanced', hint: 'Tool events only, e.g. Bash(git *).' },
-  ],
-  'hook.http': [
-    { key: 'url', label: 'URL', type: 'text', group: 'Basic' },
-    { key: 'headers', label: 'Headers', type: 'keyValue', group: 'Advanced', hint: 'key: value per line.' },
-    { key: 'allowedEnvVars', label: 'Allowed env vars', type: 'stringList', group: 'Advanced' },
-    { key: 'timeout', label: 'Timeout (s)', type: 'number', group: 'Advanced' },
-  ],
-  'hook.prompt': [
-    { key: 'prompt', label: 'Prompt', type: 'textarea', group: 'Basic', hint: '$ARGUMENTS is the input JSON.' },
+  agent: [
+    { key: 'prompt', label: 'Prompt', type: 'textarea', group: 'Basic', hint: 'Refs: {{args}}, {{nodeId}}, {{nodeId.field}}.' },
+    { key: 'label', label: 'Agent label', type: 'text', group: 'Basic', hint: 'opts.label — shown in the runtime feed.' },
+    { key: 'schema', label: 'Output schema', type: 'json', group: 'Advanced', hint: 'JSON Schema for structured output (opts.schema).' },
     MODEL,
   ],
-  'hook.agent': [
-    { key: 'prompt', label: 'Prompt', type: 'textarea', group: 'Basic' },
+  pipeline: [
+    { key: 'source', label: 'Items source', type: 'resultRef', group: 'Basic', hint: 'Producing node id, or "args" to fan out over the input.' },
+    { key: 'sourceField', label: 'List field', type: 'fieldPath', group: 'Basic', hint: 'Which array field of the source result; omit if the source IS the array.' },
+    { key: 'itemPrompt', label: 'Per-item prompt', type: 'textarea', group: 'Basic', hint: 'Use {{item}} for the current element; upstream refs allowed.' },
+    { key: 'itemLabel', label: 'Per-item label', type: 'text', group: 'Advanced', placeholder: '{{item}}', hint: 'opts.label per fan-out agent.' },
+    { key: 'itemSchema', label: 'Per-item schema', type: 'json', group: 'Advanced', hint: 'JSON Schema for each item agent.' },
     MODEL,
   ],
-  'gate.condition': [
-    { key: 'matcher', label: 'Matcher', type: 'matcher', group: 'Basic' },
-    { key: 'if', label: 'Condition', type: 'permissionRule', group: 'Basic', hint: 'e.g. Bash(git *), Edit(*.ts).' },
+  branch: [
+    { key: 'source', label: 'Test result of', type: 'resultRef', group: 'Basic', hint: 'Node id whose result is tested.' },
+    { key: 'field', label: 'Boolean field', type: 'fieldPath', group: 'Basic', hint: 'Boolean-ish field on that result.' },
+    { key: 'negate', label: 'Negate condition', type: 'boolean', group: 'Advanced', hint: 'Take the "then" arm when the field is falsy.' },
   ],
-  'output.decision': [
-    { key: 'mode', label: 'Decision', type: 'select', group: 'Basic', options: ['allow', 'deny', 'ask', 'block', 'stopAll'], hint: 'What the hook tells Claude to do.' },
-    { key: 'reason', label: 'Reason', type: 'textarea', group: 'Basic', hint: 'Shown to Claude / the user. Dropped when the hook is a PermissionRequest.' },
-    { key: 'updatedInput', label: 'Updated tool input', type: 'json', group: 'Advanced', hint: 'PreToolUse / PermissionRequest: replacement tool input (JSON object).' },
-    { key: 'updatedToolOutput', label: 'Updated tool output', type: 'json', group: 'Advanced', hint: 'PostToolUse: replacement tool output (JSON object).' },
-    { key: 'additionalContext', label: 'Additional context', type: 'textarea', group: 'Advanced' },
-    { key: 'systemMessage', label: 'System message', type: 'text', group: 'Advanced' },
-    { key: 'suppressOutput', label: 'Suppress output', type: 'boolean', group: 'Advanced' },
-    { key: 'blockStyle', label: 'Block style', type: 'select', group: 'Advanced', options: ['json', 'exit2', 'exit1'], hint: 'How a blocking decision is emitted; default JSON.' },
+  loopUntilCheck: [
+    { key: 'checkPrompt', label: 'Check prompt', type: 'textarea', group: 'Basic', hint: 'Runs each round; should report whether the goal is met.' },
+    { key: 'passField', label: 'Pass field', type: 'fieldPath', group: 'Basic', hint: 'Boolean field on the check result that ends the loop.' },
+    { key: 'fixPrompt', label: 'Fix prompt', type: 'textarea', group: 'Basic', hint: 'Runs when the check fails; use {{check}} to see findings.' },
+    { key: 'maxRounds', label: 'Max rounds', type: 'number', group: 'Advanced', hint: 'Loop bound (default 2).' },
+    { key: 'checkSchema', label: 'Check schema', type: 'json', group: 'Advanced' },
+    { key: 'checkModel', label: 'Check model', type: 'model', group: 'Advanced' },
+    { key: 'fixModel', label: 'Fix model', type: 'model', group: 'Advanced' },
+  ],
+  'output.return': [
+    { key: 'source', label: 'Return result of', type: 'resultRef', group: 'Basic', hint: 'Node id whose result is returned.' },
+    { key: 'field', label: 'Field', type: 'fieldPath', group: 'Advanced', hint: 'Return source.field instead of the whole result.' },
+    { key: 'transform', label: 'Transform', type: 'transform', group: 'Advanced', options: TRANSFORMS, hint: 'filterBoolean → .filter(Boolean); flatten → .flat().' },
   ],
 };
 
-/** Palette entries grouped as in DESIGN-BRIEF (Triggers / Steps / Hooks / Control). */
+/** Palette entries grouped as in DESIGN-BRIEF (Entry / Agents / Control). */
 export interface PaletteEntry {
   kind: NodeKind;
   label: string;
 }
 export const PALETTE: { group: string; entries: PaletteEntry[] }[] = [
   {
-    group: 'Triggers',
+    group: 'Entry',
     entries: [
-      { kind: 'trigger.slashCommand', label: 'Slash command' },
-      { kind: 'trigger.hookEvent', label: 'Hook event' },
-      { kind: 'trigger.sessionStart', label: 'Session start' },
-      { kind: 'trigger.headless', label: 'Headless runner' },
+      { kind: 'workflow.meta', label: 'Workflow (meta)' },
     ],
   },
   {
-    group: 'Steps',
+    group: 'Agents',
     entries: [
-      { kind: 'step.prompt', label: 'Prompt' },
-      { kind: 'step.shell', label: 'Shell' },
-      { kind: 'step.fileRef', label: 'File refs' },
-      { kind: 'step.subagent', label: 'Subagent' },
-      { kind: 'step.mcpTool', label: 'MCP tool' },
-    ],
-  },
-  {
-    group: 'Hooks',
-    entries: [
-      { kind: 'hook.command', label: 'Command hook' },
-      { kind: 'hook.http', label: 'HTTP hook' },
-      { kind: 'hook.prompt', label: 'Prompt hook' },
-      { kind: 'hook.agent', label: 'Agent hook' },
+      { kind: 'agent', label: 'Agent' },
+      { kind: 'pipeline', label: 'Pipeline (fan-out)' },
     ],
   },
   {
     group: 'Control',
     entries: [
-      { kind: 'gate.condition', label: 'Gate' },
-      { kind: 'output.decision', label: 'Decision' },
+      { kind: 'branch', label: 'Branch (if/else)' },
+      { kind: 'loopUntilCheck', label: 'Loop until check' },
+      { kind: 'output.return', label: 'Return' },
     ],
   },
 ];
@@ -189,35 +108,17 @@ export const PALETTE: { group: string; entries: PaletteEntry[] }[] = [
 /** A blank data object for a freshly-created node of a kind (schema-valid defaults). */
 export function defaultData(kind: NodeKind): Record<string, unknown> {
   switch (kind) {
-    case 'trigger.slashCommand':
-      return { name: 'command', description: '' };
-    case 'trigger.hookEvent':
-      return { event: 'PreToolUse', scope: 'project' };
-    case 'trigger.sessionStart':
-      return { matcher: 'startup' };
-    case 'trigger.headless':
-      return { promptTemplate: '' };
-    case 'step.prompt':
-      return { body: '' };
-    case 'step.shell':
-      return { command: '' };
-    case 'step.fileRef':
-      return { paths: [] };
-    case 'step.subagent':
-      return { name: 'agent', systemPrompt: '' };
-    case 'step.mcpTool':
-      return { server: '', tool: '' };
-    case 'hook.command':
-      return { command: '' };
-    case 'hook.http':
-      return { url: '' };
-    case 'hook.prompt':
+    case 'workflow.meta':
+      return { name: 'workflow', description: '' };
+    case 'agent':
       return { prompt: '' };
-    case 'hook.agent':
-      return { prompt: '' };
-    case 'gate.condition':
-      return {};
-    case 'output.decision':
-      return { mode: 'allow' };
+    case 'pipeline':
+      return { source: 'args', itemPrompt: '' };
+    case 'branch':
+      return { source: '', field: 'ok' };
+    case 'loopUntilCheck':
+      return { checkPrompt: '', fixPrompt: '', passField: 'passed', maxRounds: 2 };
+    case 'output.return':
+      return { source: '', transform: 'none' };
   }
 }

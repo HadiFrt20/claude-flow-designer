@@ -1,6 +1,6 @@
-// Workflow-script rules CF601–CF615. See docs/SPEC-VALIDATION.md ("Workflow script").
+// Workflow-script rules CF601–CF615 (CF612 retired). See docs/SPEC-VALIDATION.md
+// ("Workflow script").
 import type { Diagnostic, Rule } from '../diagnostics.js';
-import type { WorkflowGraph } from '../schema/graph.js';
 import type { WorkflowNode } from '../schema/nodes.js';
 import { nodesOfKind, topoOrder } from '../schema/graph-utils.js';
 import { producesBinding } from '../codegen/model.js';

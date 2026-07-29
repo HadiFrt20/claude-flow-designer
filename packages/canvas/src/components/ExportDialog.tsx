@@ -1,18 +1,19 @@
 // Export dialog = the review moment (DESIGN-BRIEF). Shows the file tree, acked
-// warnings with rule ids, and the exact `claude` command the runner will execute.
+// warnings with rule ids, and the slash command that runs the exported workflow.
 // The primary action reads "Write N files", never "OK". Actual writing is the
 // host's job (HostBridge); this component only assembles + confirms.
 import { useEditor } from '../useEditor.js';
 import type { EditorStore } from '../store.js';
 import type { HostBridge } from '../hostBridge.js';
+import type { WorkflowGraph } from '@clauflow/core';
 import { previewOf } from './PreviewPane.js';
 import { TOKENS, SPACE, SEVERITY_COLOR, SEVERITY_ICON } from '../tokens.js';
 
-/** Extract the exact `claude …` invocation from a generated run.sh, if present. */
-export function runnerCommand(files: { path: string; content: string }[]): string | null {
-  const run = files.find((f) => f.path === 'run.sh');
-  if (!run) return null;
-  return run.content.split('\n').find((l) => l.startsWith('claude ')) ?? null;
+/** The `/command` that runs the exported workflow: meta.name if set, else the slug. */
+export function workflowInvocation(graph: WorkflowGraph): string {
+  const meta = graph.nodes.find((n) => n.kind === 'workflow.meta');
+  const name = meta?.kind === 'workflow.meta' ? meta.data.name : graph.meta.slug;
+  return `/${name}`;
 }
 
 export function ExportDialog({ store, host, onClose }: { store: EditorStore; host: HostBridge; onClose: () => void }) {
@@ -43,7 +44,7 @@ export function ExportDialog({ store, host, onClose }: { store: EditorStore; hos
   }
 
   const { files } = result;
-  const cmd = runnerCommand(files);
+  const invocation = workflowInvocation(store.current);
 
   const write = () => {
     void host.writeFiles(files, { dryRun: false });
@@ -62,12 +63,10 @@ export function ExportDialog({ store, host, onClose }: { store: EditorStore; hos
           Acknowledged warnings: {acked.join(', ')}
         </p>
       )}
-      {cmd && (
-        <div style={{ marginBottom: SPACE(2) }}>
-          <div style={{ fontSize: '0.8em', color: TOKENS.textMuted }}>Runner command:</div>
-          <code style={{ fontFamily: TOKENS.monoFont, fontSize: '0.85em' }}>{cmd}</code>
-        </div>
-      )}
+      <div style={{ marginBottom: SPACE(2) }}>
+        <div style={{ fontSize: '0.8em', color: TOKENS.textMuted }}>Run it with:</div>
+        <code style={{ fontFamily: TOKENS.monoFont, fontSize: '0.85em' }}>{invocation}</code>
+      </div>
       <button
         type="button"
         onClick={write}

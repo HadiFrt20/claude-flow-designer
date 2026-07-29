@@ -4,33 +4,31 @@
 // saturated colors and appear only as a 2px left node border + port dots + minimap.
 import type { NodeKind } from '@clauflow/core';
 
-/** The five visual categories a node kind maps to. */
-export type NodeCategory = 'trigger' | 'step' | 'subagent' | 'hookHandler' | 'control';
+/** The four visual categories a workflow node kind maps to. */
+export type NodeCategory = 'meta' | 'agent' | 'pipeline' | 'control';
 
 export function categoryOf(kind: NodeKind): NodeCategory {
-  if (kind.startsWith('trigger.')) return 'trigger';
-  if (kind === 'step.subagent') return 'subagent';
-  if (kind.startsWith('hook.')) return 'hookHandler';
-  if (kind === 'gate.condition' || kind === 'output.decision') return 'control';
-  return 'step';
+  if (kind === 'workflow.meta') return 'meta';
+  if (kind === 'agent') return 'agent';
+  if (kind === 'pipeline') return 'pipeline';
+  // branch, loopUntilCheck, output.return — control flow / terminals.
+  return 'control';
 }
 
 /** `/command`-style prefix glyph per category (node headers read like a config file). */
 export const CATEGORY_GLYPH: Record<NodeCategory, string> = {
-  trigger: '▸',
-  step: '·',
-  subagent: '❖',
-  hookHandler: '⎈',
+  meta: '▸',
+  agent: '·',
+  pipeline: '❖',
   control: '◆',
 };
 
 // Accent colors (ANSI-inspired). Exposed as CSS variables so the extension can
 // override per-theme; these are the web-app dark-first fallbacks.
 export const ACCENT: Record<NodeCategory, string> = {
-  trigger: 'var(--cf-accent-trigger, #d7a65f)', // amber
-  step: 'var(--cf-accent-step, #4ec9d4)', // cyan
-  subagent: 'var(--cf-accent-subagent, #b48ead)', // violet
-  hookHandler: 'var(--cf-accent-hook, #6a9955)', // green
+  meta: 'var(--cf-accent-meta, #d7a65f)', // amber
+  agent: 'var(--cf-accent-agent, #4ec9d4)', // cyan
+  pipeline: 'var(--cf-accent-pipeline, #b48ead)', // violet
   control: 'var(--cf-accent-control, #d16969)', // red
 };
 

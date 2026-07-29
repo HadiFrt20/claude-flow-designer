@@ -150,7 +150,7 @@ function Field({ f, store, node, diag }: { f: FieldDescriptor; store: EditorStor
           />
         );
       case 'select':
-      case 'effort':
+      case 'transform':
         return (
           <select value={(raw as string) ?? ''} onChange={(e) => set(e.target.value || undefined)} aria-label={f.label} style={inputStyle(invalid)}>
             <option value="">—</option>
@@ -159,88 +159,6 @@ function Field({ f, store, node, diag }: { f: FieldDescriptor; store: EditorStor
             ))}
           </select>
         );
-      case 'stringList':
-        return (
-          <textarea
-            value={Array.isArray(raw) ? (raw as string[]).join('\n') : ''}
-            onChange={(e) => set(e.target.value.split('\n').map((s) => s.trim()).filter(Boolean))}
-            aria-label={f.label}
-            rows={3}
-            style={{ ...inputStyle(invalid), fontFamily: TOKENS.monoFont }}
-          />
-        );
-      case 'multiSelect': {
-        const selected = new Set(Array.isArray(raw) ? (raw as string[]) : []);
-        return (
-          <div role="group" aria-label={f.label} style={{ maxHeight: 140, overflowY: 'auto', border: `1px solid ${invalid ? TOKENS.error : TOKENS.border}`, borderRadius: RADIUS.input, padding: SPACE(1) }}>
-            {(f.options ?? []).map((o) => (
-              <label key={o} style={{ display: 'flex', gap: SPACE(1), fontSize: '0.85em' }}>
-                <input
-                  type="checkbox"
-                  checked={selected.has(o)}
-                  onChange={(e) => {
-                    const nextSel = new Set(selected);
-                    if (e.target.checked) nextSel.add(o);
-                    else nextSel.delete(o);
-                    set(nextSel.size ? [...nextSel] : undefined);
-                  }}
-                  aria-label={o}
-                />
-                {o}
-              </label>
-            ))}
-          </div>
-        );
-      }
-      case 'keyValue':
-        return (
-          <BufferedTextarea
-            label={f.label}
-            invalid={invalid}
-            placeholder="Authorization: Bearer …"
-            value={raw}
-            format={(v) => Object.entries((v && typeof v === 'object' ? v : {}) as Record<string, string>).map(([k, val]) => `${k}: ${val}`).join('\n')}
-            parse={(t) => {
-              const next: Record<string, string> = {};
-              for (const line of t.split('\n')) {
-                const idx = line.indexOf(':');
-                if (idx < 0) continue;
-                const k = line.slice(0, idx).trim();
-                if (k) next[k] = line.slice(idx + 1).trim();
-              }
-              return { commit: true, value: Object.keys(next).length ? next : undefined };
-            }}
-            onCommit={set}
-          />
-        );
-      case 'argList': {
-        const args = Array.isArray(raw) ? (raw as { name: string; placeholder: string }[]) : [];
-        const setArgs = (next: typeof args) => set(next.length ? next : undefined);
-        return (
-          <div role="group" aria-label={f.label}>
-            {args.map((a, i) => (
-              <div key={i} style={{ display: 'flex', gap: SPACE(1), marginBottom: SPACE(1) }}>
-                <input
-                  value={a.name}
-                  onChange={(e) => setArgs(args.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}
-                  aria-label={`arg ${i + 1} name`}
-                  placeholder="name"
-                  style={{ ...inputStyle(false), marginTop: 0 }}
-                />
-                <input
-                  value={a.placeholder}
-                  onChange={(e) => setArgs(args.map((x, j) => (j === i ? { ...x, placeholder: e.target.value } : x)))}
-                  aria-label={`arg ${i + 1} placeholder`}
-                  placeholder="$1"
-                  style={{ ...inputStyle(false), marginTop: 0, fontFamily: TOKENS.monoFont }}
-                />
-                <button type="button" onClick={() => setArgs(args.filter((_, j) => j !== i))} aria-label={`remove arg ${i + 1}`}>×</button>
-              </div>
-            ))}
-            <button type="button" aria-label="add arg" onClick={() => setArgs([...args, { name: '', placeholder: `$${args.length + 1}` }])}>+ arg</button>
-          </div>
-        );
-      }
       case 'json':
         return (
           <BufferedTextarea
@@ -266,8 +184,8 @@ function Field({ f, store, node, diag }: { f: FieldDescriptor; store: EditorStor
         return (
           <textarea value={(raw as string) ?? ''} onChange={(e) => set(e.target.value)} aria-label={f.label} rows={4} style={{ ...inputStyle(invalid), fontFamily: TOKENS.monoFont }} />
         );
-      case 'matcher':
-      case 'permissionRule':
+      case 'resultRef':
+      case 'fieldPath':
       case 'model':
       default:
         return (
@@ -282,11 +200,9 @@ function Field({ f, store, node, diag }: { f: FieldDescriptor; store: EditorStor
     }
   };
 
-  // Group-type fields render multiple controls, so they must NOT be wrapped in a
-  // single <label> (it would steal every child's accessible name). Those controls
-  // carry their own aria-labels; single-control fields keep the implicit label.
-  const isGroup = f.type === 'argList' || f.type === 'multiSelect';
-  const Wrapper = isGroup ? 'div' : 'label';
+  // Every remaining field type renders a single control, so the implicit <label>
+  // association is correct (no group wrappers left after the M6 field simplification).
+  const Wrapper = 'label';
   return (
     <Wrapper style={{ display: 'block', marginBottom: SPACE(2) }}>
       <span style={{ fontSize: '0.8em', color: TOKENS.textMuted }}>{f.label}</span>

@@ -1,7 +1,7 @@
 {
   "name": "clauflow-vscode",
   "displayName": "Claude Flow Designer",
-  "description": "Visual workflow designer for Claude Code: design on a canvas, export skills, subagents, hooks, and settings.",
+  "description": "Visual designer for Claude Code dynamic workflows: build on a canvas, export a ready-to-run .claude/workflows/<name>.js orchestration script.",
   "version": "0.1.0",
   "publisher": "clauflow",
   "repository": { "type": "git", "url": "https://github.com/HadiFrt20/claude-flow-designer.git" },
@@ -12,7 +12,7 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": "limited",
-      "description": "Editing a workflow works in Restricted Mode, but exporting to .claude/ and running the workflow in a terminal require a trusted workspace."
+      "description": "Editing a workflow works in Restricted Mode, but exporting to .claude/workflows/ and running the workflow in a terminal require a trusted workspace."
     }
   },
   "contributes": {
@@ -23,8 +23,8 @@
     }],
     "commands": [
       { "command": "claudeFlow.new", "title": "Claude Flow: New Workflow" },
-      { "command": "claudeFlow.import", "title": "Claude Flow: Import from .claude/" },
-      { "command": "claudeFlow.export", "title": "Claude Flow: Export to .claude/" },
+      { "command": "claudeFlow.import", "title": "Claude Flow: Import workflow (.clauflow.json)" },
+      { "command": "claudeFlow.export", "title": "Claude Flow: Export to .claude/workflows/" },
       { "command": "claudeFlow.run", "title": "Claude Flow: Run Workflow (terminal)" },
       { "command": "claudeFlow.refreshAssets", "title": "Claude Flow: Refresh Workflows", "icon": "$(refresh)" }
     ],

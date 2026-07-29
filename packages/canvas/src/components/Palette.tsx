@@ -1,5 +1,5 @@
-// Node palette, grouped Triggers / Steps / Hooks / Control. Click adds a node at
-// a default position (drag-drop onto the canvas is layered on in the host, but a
+// Node palette, grouped Entry / Agents / Control. Click adds a node at a default
+// position (drag-drop onto the canvas is layered on in the host, but a
 // click-to-add path keeps the palette fully keyboard-accessible — a11y floor).
 import type { EditorStore } from '../store.js';
 import { PALETTE, defaultData } from '../fields.js';

@@ -49,19 +49,19 @@ describe('palette', () => {
     expect(kinds).toEqual([...NODE_KINDS].sort());
   });
 
-  it('groups map to the four DESIGN-BRIEF categories', () => {
-    expect(PALETTE.map((g) => g.group)).toEqual(['Triggers', 'Steps', 'Hooks', 'Control']);
+  it('groups map to the DESIGN-BRIEF categories', () => {
+    expect(PALETTE.map((g) => g.group)).toEqual(['Entry', 'Agents', 'Control']);
   });
 });
 
 describe('categoryOf', () => {
   const cases: [NodeKind, string][] = [
-    ['trigger.slashCommand', 'trigger'],
-    ['step.prompt', 'step'],
-    ['step.subagent', 'subagent'],
-    ['hook.command', 'hookHandler'],
-    ['gate.condition', 'control'],
-    ['output.decision', 'control'],
+    ['workflow.meta', 'meta'],
+    ['agent', 'agent'],
+    ['pipeline', 'pipeline'],
+    ['branch', 'control'],
+    ['loopUntilCheck', 'control'],
+    ['output.return', 'control'],
   ];
   for (const [kind, cat] of cases) {
     it(`${kind} → ${cat}`, () => expect(categoryOf(kind)).toBe(cat));
@@ -69,16 +69,16 @@ describe('categoryOf', () => {
 });
 
 describe('edgeAllowed (shared with CF005)', () => {
-  it('command → step allowed; command → hook handler rejected', () => {
-    expect(edgeAllowed('trigger.slashCommand', 'step.prompt')).toBe(true);
-    expect(edgeAllowed('trigger.slashCommand', 'hook.command')).toBe(false);
+  it('meta → agent allowed; nothing → meta rejected', () => {
+    expect(edgeAllowed('workflow.meta', 'agent')).toBe(true);
+    expect(edgeAllowed('agent', 'workflow.meta')).toBe(false);
   });
-  it('hook event → gate/handler allowed', () => {
-    expect(edgeAllowed('trigger.hookEvent', 'gate.condition')).toBe(true);
-    expect(edgeAllowed('trigger.hookEvent', 'hook.command')).toBe(true);
+  it('agent → pipeline/branch allowed', () => {
+    expect(edgeAllowed('agent', 'pipeline')).toBe(true);
+    expect(edgeAllowed('agent', 'branch')).toBe(true);
   });
-  it('handler → decision allowed; handler → step rejected', () => {
-    expect(edgeAllowed('hook.command', 'output.decision')).toBe(true);
-    expect(edgeAllowed('hook.command', 'step.prompt')).toBe(false);
+  it('anything → return allowed; return → anything rejected (sink)', () => {
+    expect(edgeAllowed('agent', 'output.return')).toBe(true);
+    expect(edgeAllowed('output.return', 'agent')).toBe(false);
   });
 });

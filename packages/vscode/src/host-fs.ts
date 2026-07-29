@@ -44,22 +44,18 @@ export function changesToWrite(plan: FileChange[]): FileChange[] {
   return plan.filter((c) => c.kind !== 'unchanged');
 }
 
-// Which workspace files feed parseProject on import (same set as the web host).
+// Which workspace files feed parseProject on import. M6: the emitted .js is
+// one-way output; the <slug>.clauflow.json sidecar is the single round-trip
+// source of truth, so it is the only importable file.
 const IMPORT_GLOBS = [
-  /^\.claude\/skills\/[^/]+\/SKILL\.md$/,
-  /^\.claude\/commands\/[^/]+\.md$/,
-  /^\.claude\/agents\/[^/]+\.md$/,
-  /^\.claude\/settings\.json$/,
-  /^\.claude\/settings\.local\.json$/,
-  /^flow\.clauflow\.json$/,
-  /^run\.sh$/,
+  /(^|\/)[^/]+\.clauflow\.json$/,
 ];
 
 export function isImportable(path: string): boolean {
   return IMPORT_GLOBS.some((re) => re.test(path));
 }
 
-/** Read the importable .claude assets from the workspace into GeneratedFile[]. */
+/** Read the importable workflow sidecars from the workspace into GeneratedFile[]. */
 export async function collectWorkspaceAssets(fs: FsAccess): Promise<GeneratedFile[]> {
   const paths = [...(await fs.list('.claude')), ...(await fs.list('.'))]
     .filter((p, i, a) => a.indexOf(p) === i)
@@ -73,44 +69,22 @@ export async function collectWorkspaceAssets(fs: FsAccess): Promise<GeneratedFil
 }
 
 /**
- * Detected workspace assets for the "Claude Workflows" tree view, grouped by kind.
- * Pure over a flat path list so the TreeDataProvider stays a thin adapter.
+ * Detected workspace workflows for the "Claude Workflows" tree view, grouped by
+ * kind. Pure over a flat path list so the TreeDataProvider stays a thin adapter.
+ * `workflows` are the emitted scripts (.claude/workflows/<slug>.js); `graphs` are
+ * the round-trippable sidecars the extension can re-open.
  */
 export interface DetectedAssets {
-  skills: string[];
-  agents: string[];
-  hooks: string[];
+  workflows: string[];
   graphs: string[];
 }
 
 export function detectAssets(paths: string[]): DetectedAssets {
-  const skills: string[] = [];
-  const agents: string[] = [];
-  const hooks: string[] = [];
+  const workflows: string[] = [];
   const graphs: string[] = [];
   for (const p of paths) {
-    if (/^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(p) || /^\.claude\/commands\/[^/]+\.md$/.test(p)) skills.push(p);
-    else if (/^\.claude\/agents\/[^/]+\.md$/.test(p)) agents.push(p);
-    else if (/^\.claude\/hooks\/[^/]+\.sh$/.test(p)) hooks.push(p);
-    else if (/\.clauflow\.json$/.test(p)) graphs.push(p);
+    if (/^\.claude\/workflows\/[^/]+\.js$/.test(p)) workflows.push(p);
+    else if (/(^|\/)[^/]+\.clauflow\.json$/.test(p)) graphs.push(p);
   }
-  return { skills, agents, hooks, graphs };
-}
-
-/**
- * Extract the exact `claude …` invocation from a generated run.sh. The claude
- * call is always the final statement of run.sh (SPEC-CODEGEN "Generated script
- * conventions"), so we take everything from the `claude ` line to the end and
- * trim trailing blank lines — covering multi-line prompts (fixes the M2
- * truncation) without a fragile quote-balancing heuristic (which mis-counted
- * shSingleQuote's `'\''` apostrophe escapes and could leave a trailing newline
- * that auto-runs the terminal command).
- */
-export function runnerCommand(files: GeneratedFile[]): string | null {
-  const run = files.find((f) => f.path === 'run.sh');
-  if (!run) return null;
-  const lines = run.content.split('\n');
-  const start = lines.findIndex((l) => l.startsWith('claude '));
-  if (start === -1) return null;
-  return lines.slice(start).join('\n').replace(/\n+$/, '');
+  return { workflows, graphs };
 }

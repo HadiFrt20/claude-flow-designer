@@ -121,11 +121,12 @@ export class EditorStore {
   }
 
   // --- edge ops -------------------------------------------------------------
-  connect(source: string, target: string): void {
-    const id = `${source}->${target}`;
+  // `sourceHandle` labels a branch node's outgoing port ('then' / 'else').
+  connect(source: string, target: string, sourceHandle?: string): void {
+    const id = sourceHandle ? `${source}->${target}:${sourceHandle}` : `${source}->${target}`;
     if (this.graph.edges.some((e) => e.id === id)) return;
     const next = clone(this.graph);
-    next.edges.push({ id, source, target });
+    next.edges.push({ id, source, target, ...(sourceHandle ? { sourceHandle } : {}) });
     this.commit(next);
   }
 

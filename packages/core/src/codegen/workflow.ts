@@ -6,7 +6,7 @@ import type {
   WorkflowNode, AgentData, PipelineData, LoopUntilCheckData, ReturnData, BranchData,
 } from '../schema/nodes.js';
 import { stableJson } from './json.js';
-import { bindingNames, producesBinding } from './model.js';
+import { bindingNames } from './model.js';
 import { nodeById, topoOrder, successors } from '../schema/graph-utils.js';
 
 // --- string helpers ---------------------------------------------------------
@@ -109,7 +109,7 @@ export function emitWorkflow(graph: WorkflowGraph): GeneratedFile {
       lines.push(...emitBranch(node, names, graph, armMembers.get(id)!));
       continue;
     }
-    lines.push(...emitStatement(node, names, graph));
+    lines.push(...emitStatement(node, names));
   }
 
   return { path: `.claude/workflows/${graph.meta.slug}.js`, content: lines.join('\n') + '\n' };
@@ -159,7 +159,7 @@ function emitBranch(
     ids
       .map((id) => byId.get(id))
       .filter((n): n is WorkflowNode => n !== undefined)
-      .flatMap((n) => emitStatement(n, names, graph))
+      .flatMap((n) => emitStatement(n, names))
       .filter((l) => l !== '') // no blank lines inside the block
       .map((l) => '  ' + l);
   const out = [`if (${cond}) {`, ...arm(arms.then)];
@@ -168,7 +168,7 @@ function emitBranch(
   return out;
 }
 
-function emitStatement(node: WorkflowNode, names: Map<string, string>, graph: WorkflowGraph): string[] {
+function emitStatement(node: WorkflowNode, names: Map<string, string>): string[] {
   switch (node.kind) {
     case 'agent': {
       const d = node.data as AgentData;

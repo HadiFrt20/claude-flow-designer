@@ -6,7 +6,7 @@ import type { GeneratedFile } from '@clauflow/core';
 
 describe('buildZip / zipBuffer', () => {
   it('round-trips every generated file byte-identically through the zip', async () => {
-    const files = generate(TEMPLATES.find((t) => t.slug === 'security-gate')!.graph);
+    const files = generate(TEMPLATES.find((t) => t.slug === 'audit-routes')!.graph);
     const bytes = await zipBuffer(files);
     const back = await JSZip.loadAsync(bytes);
     for (const f of files) {
