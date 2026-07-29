@@ -33,73 +33,39 @@ review blocker (see SPEC-REVIEW.md).
 
 ## Rule catalog
 
+Two families: **CF0xx** structural rules over the workflow DAG (retargeted from the asset era but
+still generic graph checks) and **CF6xx** workflow-script rules. RuleIds are stable — never renumber.
+
 ### Graph structure (CF0xx)
 | ID | Sev | Rule | Quick fix |
 |---|---|---|---|
-| CF001 | error | Workflow unit has no trigger node | insert trigger |
-| CF002 | error | More than one primary trigger in a unit | — |
-| CF003 | error | Cycle detected in step chain | — |
-| CF004 | error | Orphan node (no path from a trigger) | delete / connect |
-| CF005 | error | Edge connects incompatible kinds (e.g. hook handler → slash command) | — |
-| CF006 | warn | Node has empty required-for-quality field (description, label) | — |
-| CF007 | error | Duplicate slug across slash commands / subagent names | rename |
-| CF008 | warn | Slash command name shadows a bundled skill (`code-review`, `verify`, ...) | rename |
+| CF001 | error | Graph has nodes but no `workflow.meta` entry point | insert meta |
+| CF002 | error | More than one `workflow.meta` node | — |
+| CF003 | error | Cycle detected in the workflow DAG (use a loopUntilCheck node, not an edge loop) | — |
+| CF004 | error | Orphan node (no path from `workflow.meta`) | delete / connect |
+| CF005 | error | Edge connects incompatible kinds (per `edgeAllowed`) | — |
+| CF006 | warn | Node has an empty required-for-quality field (label, meta description, agent prompt) | — |
+| CF008 | warn | `workflow.meta.name` shadows a bundled command (`deep-research`, ...) | rename |
 
-### Hooks (CF1xx)
+### Workflow script (CF6xx)
 | ID | Sev | Rule | Quick fix |
 |---|---|---|---|
-| CF101 | error | Blocking decision (`block`/`deny`/exit-2 tail) on a non-blockable event (per BLOCKABLE_EVENTS) | switch to side-effect output |
-| CF102 | error | `if` condition on a non-tool event (hook would never run) | remove `if` |
-| CF103 | error | `matcher` set on an event that ignores matchers (UserPromptSubmit, Stop, PostToolBatch, ...) | remove matcher |
-| CF104 | error | Bare `mcp__<server>` matcher (exact-match chars only ⇒ matches nothing) | append `__.*` |
-| CF105 | warn | Unanchored regex matcher that over-matches (e.g. `Edit.*` also hits `NotebookEdit`) | anchor `^...$` |
-| CF106 | error | Hook handler references a path placeholder in shell form without quotes | switch to exec form (`args`) |
-| CF107 | warn | `once: true` outside skill frontmatter (ignored there) | remove |
-| CF108 | warn | UserPromptSubmit handler with timeout > 30s default (stalls every prompt) | lower timeout |
-| CF109 | warn | MessageDisplay handler with timeout > 10s | lower timeout |
-| CF110 | warn | `hook.agent` used — experimental; require explicit ack (warn so the export gate lets the user ack it, like CF404) | — |
-| CF111 | error | SessionStart/Setup handler of type `http`/`prompt`/`agent` (only command & mcp_tool supported) | change type |
-| CF112 | warn | mcp_tool hook on SessionStart/Setup (server likely not connected yet) | — |
-| CF113 | error | PermissionDenied hook using exit 2 (ignored) instead of JSON `retry` | convert |
-| CF114 | warn | Hook relies on exit code 1 to block (only 2 blocks; 1 = non-blocking) | change to exit 2 |
-| CF115 | error | `hook.command.scriptBody` is a full script (leading `#!`) instead of inner logic — codegen owns the shebang + jq guard + stdin read, so a pasted full script bypasses them | strip the shebang/header |
+| CF601 | error | No `workflow.meta` node, or more than one | insert / delete extras |
+| CF602 | error | `workflow.meta.name` empty or not a valid `/command` slug | derive from graph.slug |
+| CF604 | error | `agent`/`pipeline`/`loopUntilCheck` prompt is empty | — |
+| CF605 | error | Template ref `{{nodeId}}`/`{{nodeId.field}}` targets a node that doesn't exist, isn't upstream, or produces no binding | — |
+| CF606 | error | Zero or more than one `output.return`, or a node exists downstream of the return | — |
+| CF607 | error | `pipeline.source` is not a list (missing `sourceField`, or field's JSON-Schema `type` ≠ array) | add / point `sourceField` |
+| CF608 | error | `branch` without exactly one `then` and one `else` outgoing edge | — |
+| CF609 | error | Branch-arm-exclusive node referenced from outside its arm (non-linearizable merge) | — |
+| CF610 | warn | `loopUntilCheck` missing `checkPrompt`/`fixPrompt`, or `passField` absent from `checkSchema` | — |
+| CF611 | warn | `workflow.meta.name` disagrees with graph `meta.slug` (file is `<slug>.js` but command is `/<name>`) | sync name↔slug |
+| CF612 | warn | Unreachable node (belt-and-suspenders for the branch-arm case) | delete |
+| CF613 | warn | Unknown `model` string on an agent/pipeline/loop stage (not in known aliases/IDs) | — |
+| CF614 | warn | `pipeline` fan-out with no `itemLabel` (harder to read the runtime feed) | generate label |
+| CF615 | info | Downstream `.field` ref on an `agent` with no `schema` (structured output recommended) | add schema |
 
-### Skills / commands (CF2xx)
-| ID | Sev | Rule | Quick fix |
-|---|---|---|---|
-| CF201 | error | Positional placeholder `$N` used with no matching arg definition | add arg |
-| CF202 | warn | `argument-hint` missing while args are used | generate hint |
-| CF203 | error | `` !`cmd` `` present but command not covered by `allowed-tools` Bash rule | add `Bash(<cmd> *)` |
-| CF204 | warn | Skill description over budget guidance (~keep < 200 chars; global budget 2% ctx / 16k) | — |
-| CF205 | error | `agent:` frontmatter references unknown subagent node | — |
-| CF206 | warn | `disable-model-invocation` + vague description (dead weight in context) | — |
-| CF207 | error | `@file` reference to path that is graph-declared as generated output (ordering hazard) | — |
-
-### Subagents (CF3xx)
-| ID | Sev | Rule | Quick fix |
-|---|---|---|---|
-| CF301 | error | Subagent `tools` includes a tool not in the workflow's allow set | — |
-| CF302 | warn | Subagent without description (Claude can't auto-delegate) | — |
-| CF303 | warn | `Stop` hook in agent frontmatter (auto-converted to SubagentStop — inform) | — |
-
-### Settings / model / effort (CF4xx)
-| ID | Sev | Rule | Quick fix |
-|---|---|---|---|
-| CF401 | warn | `effort: xhigh\|max` targeted at settings.json (flaky; issues #30726/#45453) | move to CLI flag (codegen does this automatically; warn explains) |
-| CF402 | warn | Haiku + xhigh/max effort (wasteful pairing) | suggest model/effort |
-| CF403 | error | Unknown model string (not in known aliases/IDs list; list is data, easy to update) | — |
-| CF404 | warn | `bypassPermissions` mode in an exported workflow (require ack) | — |
-| CF405 | error | Permission rule syntax invalid (parser in core) | — |
-| CF406 | warn | `deny` rule shadowed by broader `allow` (allow/deny precedence explainer) | — |
-| CF407 | error | env var name invalid / reserved (`CLAUDE_*` warn, `OTEL_*` stripped from subprocesses) | rename |
-
-### Headless / runner (CF5xx)
-| ID | Sev | Rule | Quick fix |
-|---|---|---|---|
-| CF501 | error | Headless trigger without prompt template | — |
-| CF502 | warn | `--output-format stream-json` consumed by nothing downstream | — |
-| CF503 | warn | `--max-turns` low for a multi-step workflow (heuristic: < steps × 2) | — |
-| CF504 | info | Worktree enabled — remind about WorktreeCreate hook interaction | — |
+> CF007 (dup slug) is retired — a graph is one workflow; the meta.name↔slug concern is CF611.
 
 ## Quick-fix framework
 

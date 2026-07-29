@@ -4,6 +4,7 @@ import { StrictMode, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Designer, EditorStore } from '@clauflow/canvas';
 import type { HostBridge, WriteResult } from '@clauflow/canvas';
+import { serializeGraph } from '@clauflow/core';
 import type { GeneratedFile, WorkflowGraph } from '@clauflow/core';
 import { isHostToWebview } from '../src/protocol.js';
 import type { WebviewToHost } from '../src/protocol.js';
@@ -89,9 +90,11 @@ function Root() {
         s.subscribe(() => post({ type: 'edit', graph: s.current }));
         storeRef.current = s;
         setStore(s);
-      } else if (JSON.stringify(msg.graph) !== JSON.stringify(existing.current)) {
+      } else if (serializeGraph(msg.graph) !== serializeGraph(existing.current)) {
         // Genuine external change: replace content IN PLACE (keeps the store
         // instance + its subscription; the host already suppresses self-echoes).
+        // Compare via canonical serialization so key-order/whitespace differences
+        // don't trip a redundant reset.
         existing.replaceGraph(msg.graph);
       }
     };

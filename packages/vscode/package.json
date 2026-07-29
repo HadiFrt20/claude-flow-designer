@@ -9,6 +9,12 @@
   "categories": ["AI", "Visualization"],
   "main": "./dist/extension.js",
   "activationEvents": [],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Editing a workflow works in Restricted Mode, but exporting to .claude/ and running the workflow in a terminal require a trusted workspace."
+    }
+  },
   "contributes": {
     "customEditors": [{
       "viewType": "clauflow.editor",

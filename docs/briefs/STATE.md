@@ -5,6 +5,7 @@ M0 | done | schema + 44 rules (CF001-CF504) w/ hit+miss fixtures & quick fixes, 
 M1 | done | full codegen (emitters+pipeline+self-lint), importer round-trip, 5-template gallery under fixtures/, fixtures:regen; mutation 83.8% (≥80); code-reviewer APPROVE
 M2 | done | React Flow canvas + palette + per-kind property panels (every field) + settings advisor + problems/quick-fix + live preview; store w/ undo/redo/copy-paste; gallery rebuild byte-identical; code-reviewer APPROVE
 M3 | done | standalone web app: WebHostBridge (FS Access dir-write + zip fallback, path-safety choke point), dir import→parseProject, IndexedDB session persist, template-gallery landing; code-reviewer APPROVE; CI green
-M4 | in-progress |
+M4 | done | VS Code extension: custom editor (canvas webview, strict CSP), postMessage HostBridge, export w/ native per-file diff-confirm, new/import/export/run commands, Claude Workflows tree view; installable .vsix; code-reviewer APPROVE; CI green (real vsce gate)
 M5 | pending |
+M6 | in-progress | PIVOT: retarget designer to Claude Code dynamic-workflow scripts (.claude/workflows/*.js); supersedes the M0–M4 .claude-asset model
 <!-- statuses: pending | in-progress | done -->

@@ -139,9 +139,17 @@ class ClauflowEditorProvider implements vscode.CustomTextEditorProvider {
           selfWritten = await applyEdit(document, raw.graph);
           break;
         case 'export':
+          if (!(await requireTrust('export to .claude/'))) {
+            postToWebview({ type: 'error', message: 'Workspace is not trusted.' });
+            break;
+          }
           await doExport(raw.files, postToWebview);
           break;
         case 'import': {
+          if (!(await requireTrust('import from .claude/'))) {
+            postToWebview({ type: 'error', message: 'Workspace is not trusted.' });
+            break;
+          }
           const g = await readWorkspaceGraph();
           postToWebview(g ? { type: 'imported', graph: g } : { type: 'error', message: 'No .claude assets found.' });
           break;
@@ -185,30 +193,78 @@ async function applyEdit(document: vscode.TextDocument, graph: WorkflowGraph): P
 }
 
 // --- commands ---------------------------------------------------------------
-async function newWorkflow(): Promise<void> {
+
+/**
+ * Gate a side-effecting action (write files / open a terminal) on Workspace
+ * Trust. In Restricted Mode we can't write to disk or run commands; instead of
+ * silently doing nothing, offer to manage trust. Returns true when trusted.
+ */
+async function requireTrust(action: string): Promise<boolean> {
+  if (vscode.workspace.isTrusted) return true;
+  const choice = await vscode.window.showWarningMessage(
+    `Trust this workspace to ${action}.`,
+    { modal: true, detail: 'Claude Flow writes to .claude/ and can open a terminal, which need a trusted workspace. Editing the canvas works without trust.' },
+    'Manage Trust',
+  );
+  if (choice === 'Manage Trust') await vscode.commands.executeCommand('workbench.trust.manage');
+  return false;
+}
+
+/**
+ * The first workspace folder, or — if none is open — a modal offering to open one
+ * (so commands guide the user instead of dead-ending on "Open a folder first").
+ * Returns null if the user dismisses the prompt.
+ */
+async function requireWorkspaceRoot(action: string): Promise<vscode.Uri | null> {
   const root = vscode.workspace.workspaceFolders?.[0]?.uri;
-  if (!root) {
-    notify('error', 'Open a folder first.');
-    return;
-  }
-  const uri = vscode.Uri.joinPath(root, 'workflow.clauflow.json');
+  if (root) return root;
+  const choice = await vscode.window.showInformationMessage(
+    `Open a folder to ${action}.`,
+    { modal: true, detail: 'Claude Flow writes workflow files into the open folder.' },
+    'Open Folder…',
+  );
+  if (choice === 'Open Folder…') await vscode.commands.executeCommand('vscode.openFolder');
+  return null;
+}
+
+async function newWorkflow(): Promise<void> {
+  if (!(await requireTrust('create a workflow'))) return;
+  const root = await requireWorkspaceRoot('create a workflow');
+  if (!root) return;
+  const uri = await uniqueUri(root, 'workflow', '.clauflow.json');
   await vscode.workspace.fs.writeFile(uri, Buffer.from(serializeGraph(emptyGraph('Untitled workflow', 'untitled')), 'utf8'));
   await vscode.commands.executeCommand('vscode.openWith', uri, 'clauflow.editor');
 }
 
+/** A non-colliding <base><n?><ext> uri in dir (workflow.clauflow.json, workflow-2…). */
+async function uniqueUri(dir: vscode.Uri, base: string, ext: string): Promise<vscode.Uri> {
+  for (let i = 1; ; i++) {
+    const name = i === 1 ? `${base}${ext}` : `${base}-${i}${ext}`;
+    const uri = vscode.Uri.joinPath(dir, name);
+    try {
+      await vscode.workspace.fs.stat(uri); // exists → try next
+    } catch {
+      return uri; // not found → use it
+    }
+  }
+}
+
 async function importToNewGraph(): Promise<void> {
+  if (!(await requireTrust('import a workflow'))) return;
+  const root = await requireWorkspaceRoot('import a workflow');
+  if (!root) return;
   const g = await readWorkspaceGraph();
   if (!g) {
     notify('warn', 'No .claude assets found in this workspace.');
     return;
   }
-  const root = vscode.workspace.workspaceFolders![0]!.uri;
-  const uri = vscode.Uri.joinPath(root, `${g.meta.slug || 'imported'}.clauflow.json`);
+  const uri = await uniqueUri(root, g.meta.slug || 'imported', '.clauflow.json');
   await vscode.workspace.fs.writeFile(uri, Buffer.from(serializeGraph(g), 'utf8'));
   await vscode.commands.executeCommand('vscode.openWith', uri, 'clauflow.editor');
 }
 
 async function exportActiveGraph(): Promise<void> {
+  if (!(await requireTrust('export to .claude/'))) return;
   const graph = await activeGraph();
   if (!graph) return;
   let files: GeneratedFile[];
@@ -222,6 +278,7 @@ async function exportActiveGraph(): Promise<void> {
 }
 
 async function runActiveGraph(): Promise<void> {
+  if (!(await requireTrust('run the workflow'))) return;
   const graph = await activeGraph();
   if (!graph) return;
   let files: GeneratedFile[];
