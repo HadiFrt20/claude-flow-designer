@@ -60,7 +60,6 @@ still generic graph checks) and **CF6xx** workflow-script rules. RuleIds are sta
 | CF609 | error | Branch-arm-exclusive node referenced from outside its arm (non-linearizable merge) | — |
 | CF610 | warn | `loopUntilCheck` missing `checkPrompt`/`fixPrompt`, or `passField` absent from `checkSchema` | — |
 | CF611 | warn | `workflow.meta.name` disagrees with graph `meta.slug` (file is `<slug>.js` but command is `/<name>`) | sync name↔slug |
-| CF612 | warn | Unreachable node (belt-and-suspenders for the branch-arm case) | delete |
 | CF613 | warn | Unknown `model` string on an agent/pipeline/loop stage (not in known aliases/IDs) | — |
 | CF614 | warn | `pipeline` fan-out with no `itemLabel` (harder to read the runtime feed) | generate label |
 | CF615 | info | Downstream `.field` ref on an `agent` with no `schema` (structured output recommended) | add schema |

@@ -1,14 +1,10 @@
-// Pure graph-traversal helpers shared by validation rules and (later) codegen.
+// Pure graph-traversal helpers shared by validation rules and codegen.
 import type { WorkflowGraph, Edge } from './graph.js';
 import type { NodeKind, WorkflowNode } from './nodes.js';
-import type { HookEvent } from './types.js';
 
-const TRIGGER_KINDS: ReadonlySet<NodeKind> = new Set([
-  'trigger.slashCommand', 'trigger.hookEvent', 'trigger.sessionStart', 'trigger.headless',
-]);
-
-export function isTrigger(node: WorkflowNode): boolean {
-  return TRIGGER_KINDS.has(node.kind);
+/** The workflow.meta node is the unique DAG root (entry point). */
+export function isRoot(node: WorkflowNode): boolean {
+  return node.kind === 'workflow.meta';
 }
 
 export function nodeById(graph: WorkflowGraph): Map<string, WorkflowNode> {
@@ -43,40 +39,14 @@ export function predecessors(graph: WorkflowGraph, nodeId: string): string[] {
   return incoming(graph, nodeId).map((e) => e.source);
 }
 
-/**
- * Walk backward from a node to the nearest hook-firing trigger and return the
- * event it fires on, if any. Used by hook rules (a handler/decision is bound to
- * whatever trigger feeds it, possibly through a gate.condition). Both
- * `trigger.hookEvent` and the dedicated `trigger.sessionStart` node fire hooks;
- * the latter always governs the `SessionStart` event.
- */
-export function governingHookEvent(
-  graph: WorkflowGraph,
-  nodeId: string,
-): HookEvent | undefined {
-  const byId = nodeById(graph);
-  const seen = new Set<string>();
-  const stack = [...predecessors(graph, nodeId)];
-  while (stack.length) {
-    const id = stack.pop()!;
-    if (seen.has(id)) continue;
-    seen.add(id);
-    const n = byId.get(id);
-    if (n?.kind === 'trigger.hookEvent') return n.data.event;
-    if (n?.kind === 'trigger.sessionStart') return 'SessionStart';
-    stack.push(...predecessors(graph, id));
-  }
-  return undefined;
-}
-
-/** Set of node ids reachable from any trigger (forward traversal over edges). */
-export function reachableFromTriggers(graph: WorkflowGraph): Set<string> {
+/** Set of node ids reachable from the workflow.meta root (forward over edges). */
+export function reachableFromRoot(graph: WorkflowGraph): Set<string> {
   const adj = new Map<string, string[]>();
   for (const e of graph.edges) {
     (adj.get(e.source) ?? adj.set(e.source, []).get(e.source)!).push(e.target);
   }
   const seen = new Set<string>();
-  const stack = graph.nodes.filter(isTrigger).map((n) => n.id);
+  const stack = graph.nodes.filter(isRoot).map((n) => n.id);
   for (const id of stack) seen.add(id);
   while (stack.length) {
     const id = stack.pop()!;
@@ -153,4 +123,49 @@ export function findCycle(graph: WorkflowGraph, kinds?: ReadonlySet<NodeKind>): 
     }
   }
   return null;
+}
+
+/**
+ * Deterministic topological order of the nodes (Kahn's algorithm). Ties among
+ * ready (in-degree 0) nodes are broken by the position of the node's earliest
+ * incoming edge in `graph.edges`, then by node id — the same stable ordering
+ * `codegen/model.ts` uses for successors. Returns node ids in execution order.
+ * Assumes the graph is acyclic (callers run findCycle first / CF003).
+ */
+export function topoOrder(graph: WorkflowGraph): string[] {
+  const indeg = new Map<string, number>();
+  const adj = new Map<string, string[]>();
+  for (const n of graph.nodes) {
+    indeg.set(n.id, 0);
+    adj.set(n.id, []);
+  }
+  for (const e of graph.edges) {
+    if (!indeg.has(e.source) || !indeg.has(e.target)) continue;
+    adj.get(e.source)!.push(e.target);
+    indeg.set(e.target, (indeg.get(e.target) ?? 0) + 1);
+  }
+  // Earliest incoming-edge index per node, for the stable tiebreak.
+  const firstEdgeIndex = new Map<string, number>();
+  graph.edges.forEach((e, i) => {
+    if (!firstEdgeIndex.has(e.target)) firstEdgeIndex.set(e.target, i);
+  });
+  const rank = (id: string): [number, string] => [firstEdgeIndex.get(id) ?? -1, id];
+  const ready = graph.nodes.filter((n) => (indeg.get(n.id) ?? 0) === 0).map((n) => n.id);
+  const order: string[] = [];
+  const cmp = (a: string, b: string): number => {
+    const [ra, ia] = rank(a);
+    const [rb, ib] = rank(b);
+    return ra !== rb ? ra - rb : ia < ib ? -1 : ia > ib ? 1 : 0;
+  };
+  while (ready.length) {
+    ready.sort(cmp);
+    const id = ready.shift()!;
+    order.push(id);
+    for (const next of adj.get(id) ?? []) {
+      const d = (indeg.get(next) ?? 0) - 1;
+      indeg.set(next, d);
+      if (d === 0) ready.push(next);
+    }
+  }
+  return order;
 }

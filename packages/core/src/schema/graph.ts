@@ -1,32 +1,16 @@
 // WorkflowGraph + GlobalSettings schema and parse/serialize helpers.
 // Source of truth: docs/SPEC-NODES.md ("Top level"). Graph version is 1.
 import { z } from 'zod';
-import { effortSchema, permissionModeSchema, workflowNodeSchema } from './nodes.js';
+import { workflowNodeSchema } from './nodes.js';
 import type { RuleId } from './types.js';
 
-export const headlessSettingsSchema = z.object({
-  enabled: z.boolean(),
-  outputFormat: z.enum(['text', 'json', 'stream-json']).optional(),
-  maxTurns: z.number().optional(),
-  worktree: z.boolean().optional(),
-  verbose: z.boolean().optional(),
-});
-
-export const permissionsSchema = z.object({
-  allow: z.array(z.string()),
-  deny: z.array(z.string()),
-  ask: z.array(z.string()),
-});
-
+// GlobalSettings is a mostly-reserved envelope (see docs/SPEC-NODES.md). Workflow
+// codegen reads only `model` (a default for stages that don't route their own).
+// The remaining fields are retained for envelope stability + the settings panel;
+// they do not affect the emitted .js.
 export const globalSettingsSchema = z.object({
   model: z.string().optional(),
-  effort: effortSchema.optional(),
-  permissionMode: permissionModeSchema.optional(),
-  permissions: permissionsSchema.optional(),
   env: z.record(z.string(), z.string()).optional(),
-  outputStyle: z.string().optional(),
-  disableAllHooks: z.boolean().optional(),
-  headless: headlessSettingsSchema.optional(),
 });
 
 export const edgeSchema = z.object({
@@ -55,8 +39,6 @@ export const workflowGraphSchema = z.object({
 });
 
 export type GlobalSettings = z.infer<typeof globalSettingsSchema>;
-export type HeadlessSettings = z.infer<typeof headlessSettingsSchema>;
-export type Permissions = z.infer<typeof permissionsSchema>;
 export type Edge = z.infer<typeof edgeSchema>;
 export type WorkflowMeta = z.infer<typeof metaSchema>;
 export type WorkflowGraph = z.infer<typeof workflowGraphSchema>;

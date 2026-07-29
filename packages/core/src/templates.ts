@@ -1,176 +1,123 @@
-// Template gallery: ready-to-use starter workflows. These are real, valid graphs
-// (they pass the export gate) and double as codegen fixtures — the CI drift check
-// regenerates their output under fixtures/ and diffs against the committed copy.
-// SPEC brief M1: pr-review, smart-commit, test-fix-loop, security-gate,
-// session-context-loader.
+// Template gallery: ready-to-use starter dynamic workflows. Real, valid graphs
+// (they pass the export gate) that double as codegen fixtures — the CI drift check
+// regenerates their .js under fixtures/ and diffs against the committed copy.
+// Shapes mirror docs/en/workflows: single agent, fan-out+merge, loop-until-check,
+// branch-on-review, args-driven pipeline.
 import type { WorkflowGraph } from './schema/graph.js';
 import type { WorkflowNode } from './schema/nodes.js';
 
 const P = { x: 0, y: 0 };
+const node = (n: WorkflowNode): WorkflowNode => n;
 
-function node(n: WorkflowNode): WorkflowNode {
-  return n;
-}
-
-// --- pr-review: a slash command that embeds the diff and asks for a review -----
-const prReview: WorkflowGraph = {
+// --- audit-routes: discover → fan-out audit → return -----------------------
+const auditRoutes: WorkflowGraph = {
   version: 1,
-  meta: { name: 'PR Review', slug: 'pr-review', description: 'Review the current diff for issues' },
-  settings: {
-    model: 'sonnet',
-    permissions: { allow: ['Bash(git diff *)', 'Bash(git log *)'], deny: [], ask: [] },
-  },
-  nodes: [
-    node({
-      id: 'cmd', kind: 'trigger.slashCommand', label: 'pr-review', position: P,
-      data: {
-        name: 'pr-review',
-        description: 'Review the staged/committed diff and report issues by severity.',
-        args: [{ name: 'base', placeholder: '$1' }],
-        argumentHint: '[base-branch]',
-      },
-    }),
-    node({
-      id: 'diff', kind: 'step.shell', label: 'diff', position: P,
-      data: { command: 'git diff $1...HEAD', embedOutput: true },
-    }),
-    node({
-      id: 'ask', kind: 'step.prompt', label: 'review', position: P,
-      data: {
-        body: 'Review the diff above against $1. List findings grouped by severity (blocker/major/minor), each with file:line and a concrete fix.',
-      },
-    }),
-  ],
-  edges: [
-    { id: 'e1', source: 'cmd', target: 'diff' },
-    { id: 'e2', source: 'diff', target: 'ask' },
-  ],
-};
-
-// --- smart-commit: stage, summarize, and propose a conventional commit ----------
-const smartCommit: WorkflowGraph = {
-  version: 1,
-  meta: { name: 'Smart Commit', slug: 'smart-commit', description: 'Draft a conventional commit from staged changes' },
-  settings: { permissions: { allow: ['Bash(git status *)', 'Bash(git diff *)'], deny: [], ask: [] } },
-  nodes: [
-    node({
-      id: 'cmd', kind: 'trigger.slashCommand', label: 'smart-commit', position: P,
-      data: {
-        name: 'smart-commit',
-        description: 'Summarize staged changes and propose a conventional-commit message.',
-      },
-    }),
-    node({
-      id: 'status', kind: 'step.shell', label: 'status', position: P,
-      data: { command: 'git status --short', embedOutput: true },
-    }),
-    node({
-      id: 'staged', kind: 'step.shell', label: 'staged diff', position: P,
-      data: { command: 'git diff --cached', embedOutput: true },
-    }),
-    node({
-      id: 'draft', kind: 'step.prompt', label: 'draft', position: P,
-      data: {
-        body: 'From the staged changes above, propose ONE conventional-commit message (type(scope): subject) plus a short body. Do not run git commit.',
-      },
-    }),
-  ],
-  edges: [
-    { id: 'e1', source: 'cmd', target: 'status' },
-    { id: 'e2', source: 'status', target: 'staged' },
-    { id: 'e3', source: 'staged', target: 'draft' },
-  ],
-};
-
-// --- test-fix-loop: headless runner that runs tests and fixes failures ----------
-const testFixLoop: WorkflowGraph = {
-  version: 1,
-  meta: {
-    name: 'Test-Fix Loop',
-    slug: 'test-fix-loop',
-    description: 'Headless: run tests, fix failures, repeat',
-    // stream-json is intentional here (the runner streams progress); ack CF502.
-    ackedWarnings: ['CF502'],
-  },
-  settings: {
-    model: 'sonnet',
-    permissions: { allow: ['Bash(npm test *)', 'Bash(npm run *)', 'Edit'], deny: [], ask: [] },
-    headless: { enabled: true, outputFormat: 'stream-json', maxTurns: 40, verbose: true },
-  },
-  nodes: [
-    node({
-      id: 'run', kind: 'trigger.headless', label: 'runner', position: P,
-      data: {
-        promptTemplate: 'Run the test suite. For each failing test, diagnose and fix the code, then re-run until green. Do not weaken assertions.',
-      },
-    }),
-    node({
-      id: 'step', kind: 'step.prompt', label: 'loop', position: P,
-      data: { body: 'Iterate: run tests → read the first failure → fix → re-run.' },
-    }),
-  ],
-  edges: [{ id: 'e1', source: 'run', target: 'step' }],
-};
-
-// --- security-gate: PreToolUse hook that denies destructive Bash --------------
-const securityGate: WorkflowGraph = {
-  version: 1,
-  meta: { name: 'Security Gate', slug: 'security-gate', description: 'Deny destructive shell commands via a PreToolUse hook' },
-  settings: { permissions: { allow: [], deny: ['Bash(rm -rf *)'], ask: [] } },
-  nodes: [
-    node({
-      id: 'trg', kind: 'trigger.hookEvent', label: 'pre-bash', position: P,
-      data: { event: 'PreToolUse', matcher: 'Bash', scope: 'project' },
-    }),
-    node({
-      id: 'guard', kind: 'hook.command', label: 'guard', position: P,
-      data: {
-        command: 'bash',
-        scriptBody:
-          'cmd=$(jq -r \'.tool_input.command // ""\' <<<"$input")\nif printf \'%s\' "$cmd" | grep -Eq \'rm[[:space:]]+-rf|:\\(\\)\\{\'; then\n  blocked=1\nelse\n  blocked=0\nfi\nif [ "$blocked" -eq 0 ]; then exit 0; fi',
-      },
-    }),
-    node({
-      id: 'deny', kind: 'output.decision', label: 'deny', position: P,
-      data: { mode: 'deny', reason: 'Destructive command blocked by the security gate.', blockStyle: 'json' },
-    }),
-  ],
-  edges: [
-    { id: 'e1', source: 'trg', target: 'guard' },
-    { id: 'e2', source: 'guard', target: 'deny' },
-  ],
-};
-
-// --- session-context-loader: SessionStart hook injecting repo context ----------
-const sessionContextLoader: WorkflowGraph = {
-  version: 1,
-  meta: {
-    name: 'Session Context Loader',
-    slug: 'session-context-loader',
-    description: 'Inject repo status into context at session start',
-  },
+  meta: { name: 'Audit Routes', slug: 'audit-routes', description: 'Audit route handlers for missing auth' },
   settings: {},
   nodes: [
+    node({ id: 'meta', kind: 'workflow.meta', label: 'Audit Routes', position: P, data: { name: 'audit-routes', description: 'Audit route handlers for missing auth' } }),
     node({
-      id: 'trg', kind: 'trigger.sessionStart', label: 'on start', position: P,
-      data: { matcher: 'startup' },
-    }),
-    node({
-      id: 'load', kind: 'hook.command', label: 'load context', position: P,
+      id: 'list', kind: 'agent', label: 'List routes', position: P,
       data: {
-        command: 'bash',
-        scriptBody:
-          'ctx=$(git -C "$CLAUDE_PROJECT_DIR" status --short 2>/dev/null || echo "no git")\nprintf \'%s\' "$ctx" > /tmp/clauflow-ctx.txt',
+        prompt: 'List every .ts file under src/routes/.',
+        schema: { type: 'object', required: ['files'], properties: { files: { type: 'array', items: { type: 'string' } } } },
       },
     }),
     node({
-      id: 'note', kind: 'output.decision', label: 'add context', position: P,
-      data: { mode: 'allow', additionalContext: 'Repo status loaded at session start.' },
+      id: 'audit', kind: 'pipeline', label: 'Audit routes', position: P,
+      data: { source: 'list', sourceField: 'files', itemPrompt: 'Audit {{item}} for missing authentication checks.', itemLabel: '{{item}}' },
     }),
+    node({ id: 'ret', kind: 'output.return', label: 'return', position: P, data: { source: 'audit', transform: 'filterBoolean' } }),
   ],
   edges: [
-    { id: 'e1', source: 'trg', target: 'load' },
-    { id: 'e2', source: 'load', target: 'note' },
+    { id: 'e1', source: 'meta', target: 'list' },
+    { id: 'e2', source: 'list', target: 'audit' },
+    { id: 'e3', source: 'audit', target: 'ret' },
+  ],
+};
+
+// --- single-agent: the smallest useful workflow ----------------------------
+const summarize: WorkflowGraph = {
+  version: 1,
+  meta: { name: 'Summarize', slug: 'summarize', description: 'Summarize the input in three bullets' },
+  settings: {},
+  nodes: [
+    node({ id: 'meta', kind: 'workflow.meta', label: 'Summarize', position: P, data: { name: 'summarize', description: 'Summarize the input in three bullets', argsHint: 'the text to summarize' } }),
+    node({ id: 'sum', kind: 'agent', label: 'Summarize', position: P, data: { prompt: 'Summarize the following in three bullets:\n{{args}}', label: 'summarize' } }),
+    node({ id: 'ret', kind: 'output.return', label: 'return', position: P, data: { source: 'sum', transform: 'none' } }),
+  ],
+  edges: [
+    { id: 'e1', source: 'meta', target: 'sum' },
+    { id: 'e2', source: 'sum', target: 'ret' },
+  ],
+};
+
+// --- test-fix: loop-until-check --------------------------------------------
+const testFix: WorkflowGraph = {
+  version: 1,
+  meta: { name: 'Test Fix', slug: 'test-fix', description: 'Run tests and fix failures until green' },
+  settings: {},
+  nodes: [
+    node({ id: 'meta', kind: 'workflow.meta', label: 'Test Fix', position: P, data: { name: 'test-fix', description: 'Run tests and fix failures until green' } }),
+    node({
+      id: 'loop', kind: 'loopUntilCheck', label: 'Fix loop', position: P,
+      data: {
+        checkPrompt: 'Run the test suite and report whether it passed.',
+        checkSchema: { type: 'object', properties: { passed: { type: 'boolean' }, progress: { type: 'number' } } },
+        passField: 'passed',
+        fixPrompt: 'Fix the failures reported: {{check}}.',
+        maxRounds: 2,
+      },
+    }),
+    node({ id: 'ret', kind: 'output.return', label: 'return', position: P, data: { source: 'loop', transform: 'none' } }),
+  ],
+  edges: [
+    { id: 'e1', source: 'meta', target: 'loop' },
+    { id: 'e2', source: 'loop', target: 'ret' },
+  ],
+};
+
+// --- branch-review: review, then branch on the verdict ---------------------
+const branchReview: WorkflowGraph = {
+  version: 1,
+  meta: { name: 'Branch Review', slug: 'branch-review', description: 'Review a change and act on the verdict' },
+  settings: {},
+  nodes: [
+    node({ id: 'meta', kind: 'workflow.meta', label: 'Branch Review', position: P, data: { name: 'branch-review', description: 'Review a change and act on the verdict' } }),
+    node({
+      id: 'review', kind: 'agent', label: 'Review', position: P,
+      data: { prompt: 'Review the current diff. Report whether it is safe to merge.', schema: { type: 'object', properties: { safe: { type: 'boolean' } } }, label: 'review' },
+    }),
+    node({ id: 'br', kind: 'branch', label: 'safe?', position: P, data: { source: 'review', field: 'safe' } }),
+    node({ id: 'approve', kind: 'agent', label: 'Approve', position: P, data: { prompt: 'Draft an approving PR comment.', label: 'approve' } }),
+    node({ id: 'request', kind: 'agent', label: 'Request changes', position: P, data: { prompt: 'Draft a request-changes PR comment citing {{review}}.', label: 'request' } }),
+    node({ id: 'ret', kind: 'output.return', label: 'return', position: P, data: { source: 'review', transform: 'none' } }),
+  ],
+  edges: [
+    { id: 'e1', source: 'meta', target: 'review' },
+    { id: 'e2', source: 'review', target: 'br' },
+    { id: 'e3', source: 'br', target: 'approve', sourceHandle: 'then' },
+    { id: 'e4', source: 'br', target: 'request', sourceHandle: 'else' },
+    { id: 'e5', source: 'br', target: 'ret' },
+  ],
+};
+
+// --- args-pipeline: fan out directly over args -----------------------------
+const gradePrs: WorkflowGraph = {
+  version: 1,
+  meta: { name: 'Grade PRs', slug: 'grade-prs', description: 'Grade each PR number passed in args' },
+  settings: {},
+  nodes: [
+    node({ id: 'meta', kind: 'workflow.meta', label: 'Grade PRs', position: P, data: { name: 'grade-prs', description: 'Grade each PR number passed in args', argsHint: 'an array of PR numbers' } }),
+    node({
+      id: 'grade', kind: 'pipeline', label: 'Grade PR', position: P,
+      data: { source: 'args', itemPrompt: 'Grade PR #{{item}} for review quality (0-10) with a one-line reason.', itemLabel: 'PR {{item}}' },
+    }),
+    node({ id: 'ret', kind: 'output.return', label: 'return', position: P, data: { source: 'grade', transform: 'none' } }),
+  ],
+  edges: [
+    { id: 'e1', source: 'meta', target: 'grade' },
+    { id: 'e2', source: 'grade', target: 'ret' },
   ],
 };
 
@@ -181,9 +128,9 @@ export interface Template {
 }
 
 export const TEMPLATES: Template[] = [
-  { slug: 'pr-review', title: 'PR Review', graph: prReview },
-  { slug: 'smart-commit', title: 'Smart Commit', graph: smartCommit },
-  { slug: 'test-fix-loop', title: 'Test-Fix Loop', graph: testFixLoop },
-  { slug: 'security-gate', title: 'Security Gate', graph: securityGate },
-  { slug: 'session-context-loader', title: 'Session Context Loader', graph: sessionContextLoader },
+  { slug: 'audit-routes', title: 'Audit Routes (fan-out)', graph: auditRoutes },
+  { slug: 'summarize', title: 'Summarize (single agent)', graph: summarize },
+  { slug: 'test-fix', title: 'Test-Fix (loop)', graph: testFix },
+  { slug: 'branch-review', title: 'Branch Review', graph: branchReview },
+  { slug: 'grade-prs', title: 'Grade PRs (args pipeline)', graph: gradePrs },
 ];
