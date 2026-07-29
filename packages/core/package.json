@@ -6,5 +6,5 @@
   "types": "dist/index.d.ts",
   "bin": { "clauflow": "dist/cli.js" },
   "scripts": { "build": "tsc -p tsconfig.json", "test": "vitest run" },
-  "dependencies": { "zod": "^3.23.0", "js-yaml": "^4.1.0", "gray-matter": "^4.0.3" }
+  "dependencies": { "zod": "^3.23.0", "js-yaml": "^4.1.0", "gray-matter": "^4.0.3", "acorn": "^8.11.0" }
 }
