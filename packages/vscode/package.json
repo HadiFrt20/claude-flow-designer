@@ -23,7 +23,7 @@
     }],
     "commands": [
       { "command": "claudeFlow.new", "title": "Claude Flow: New Workflow" },
-      { "command": "claudeFlow.import", "title": "Claude Flow: Import workflow (.clauflow.json)" },
+      { "command": "claudeFlow.import", "title": "Claude Flow: Open / Import Workflow…" },
       { "command": "claudeFlow.export", "title": "Claude Flow: Export to .claude/workflows/" },
       { "command": "claudeFlow.run", "title": "Claude Flow: Run Workflow (terminal)" },
       { "command": "claudeFlow.refreshAssets", "title": "Claude Flow: Refresh Workflows", "icon": "$(refresh)" }

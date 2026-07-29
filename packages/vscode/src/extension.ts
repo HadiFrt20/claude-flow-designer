@@ -150,7 +150,7 @@ class ClauflowEditorProvider implements vscode.CustomTextEditorProvider {
             break;
           }
           const g = await readWorkspaceGraph();
-          postToWebview(g ? { type: 'imported', graph: g } : { type: 'error', message: 'No .claude assets found.' });
+          postToWebview(g ? { type: 'imported', graph: g } : { type: 'error', message: 'No .clauflow.json workflow found in this workspace.' });
           break;
         }
         case 'notify':
@@ -252,11 +252,60 @@ async function importToNewGraph(): Promise<void> {
   if (!(await requireTrust('import a workflow'))) return;
   const root = await requireWorkspaceRoot('import a workflow');
   if (!root) return;
-  const g = await readWorkspaceGraph();
-  if (!g) {
-    notify('warn', 'No .claude assets found in this workspace.');
+  const fs = workspaceFs();
+  if (!fs) return;
+
+  // Present every detected workflow in a searchable picker. Sidecars round-trip
+  // onto the canvas; the emitted .js scripts are one-way output (open as text).
+  // `target` (not `kind`, which QuickPickItem already reserves) routes the choice.
+  interface WorkflowPick extends vscode.QuickPickItem {
+    rel: string;
+    target: 'graph' | 'js';
+  }
+  const detected = detectAssets(await fs.list('.'));
+  const items: WorkflowPick[] = [
+    ...detected.graphs.map((rel): WorkflowPick => ({
+      label: `$(edit) ${rel}`,
+      description: 'editable graph',
+      detail: 'Opens on the canvas (round-trip sidecar).',
+      rel,
+      target: 'graph',
+    })),
+    ...detected.workflows.map((rel): WorkflowPick => ({
+      label: `$(file-code) ${rel}`,
+      description: 'workflow script (read-only)',
+      detail: 'One-way output — opens as JavaScript, not on the canvas.',
+      rel,
+      target: 'js',
+    })),
+  ];
+  if (items.length === 0) {
+    notify('warn', 'No workflows found (looked for *.clauflow.json and .claude/workflows/*.js).');
     return;
   }
+
+  const pick = await vscode.window.showQuickPick(items, {
+    title: 'Import / open a workflow',
+    placeHolder: 'Type to search workflows by name…',
+    matchOnDescription: true,
+    matchOnDetail: true,
+  });
+  if (!pick) return;
+
+  const fileUriForRel = vscode.Uri.joinPath(root, pick.rel);
+  if (pick.target === 'js') {
+    // One-way: just open the script as read-only text.
+    await vscode.window.showTextDocument(fileUriForRel, { preview: false });
+    return;
+  }
+  // Sidecar: parse it and open a fresh graph on the canvas.
+  const content = await fs.read(pick.rel);
+  const parsed = content ? safeParseGraph(safeJson(content)) : null;
+  if (!parsed || !parsed.success) {
+    notify('error', `Could not parse ${pick.rel} as a workflow graph.`);
+    return;
+  }
+  const g = parsed.data;
   const uri = await uniqueUri(root, g.meta.slug || 'imported', '.clauflow.json');
   await vscode.workspace.fs.writeFile(uri, Buffer.from(serializeGraph(g), 'utf8'));
   await vscode.commands.executeCommand('vscode.openWith', uri, 'clauflow.editor');
