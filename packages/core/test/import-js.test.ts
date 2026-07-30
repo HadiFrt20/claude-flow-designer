@@ -362,6 +362,23 @@ describe('parseWorkflowJs — M8 review regressions', () => {
     expect(jsOf(generate(g))).toContain('parseInt(args.n)');
   });
 
+  it('B10: exempt span is anchored on agent( — not a same-text substring in the binding', () => {
+    // Binding `ab` contains the promptExpr text `a`; the exempt span must cover the
+    // ARGUMENT `a` (after `agent(`), not the `a` inside the binding name.
+    const g0 = {
+      version: 1 as const, meta: { name: 'x', slug: 'x' }, settings: {},
+      nodes: [
+        meta,
+        { id: 'raw', kind: 'raw', label: 'code', position: { x: 0, y: 0 }, data: { code: 'const a = 1', produces: ['a'] } },
+        { id: 'ab', kind: 'agent', label: 'ab', position: { x: 0, y: 0 }, data: { promptExpr: 'a' } },
+        ret('ab'),
+      ],
+      edges: [{ id: 'e1', source: 'm', target: 'raw' }, { id: 'e2', source: 'raw', target: 'ab' }, { id: 'e3', source: 'ab', target: 'ret' }],
+    } as never;
+    expect(() => generate(g0)).not.toThrow(); // no false-positive self-lint on the binding's 'a'
+    expect(jsOf(generate(g0))).toContain('const ab = await agent(a)');
+  });
+
   it('B8: a sequence-expression prompt arg falls to raw (parens not lost)', () => {
     const src = 'export const meta = { name: "x", description: "d" }\nconst a = await agent((foo, bar), { label: \'z\' })\nreturn a\n';
     const g = parseWorkflowJs(src, 'x')!;

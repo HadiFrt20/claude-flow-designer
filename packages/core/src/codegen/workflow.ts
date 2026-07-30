@@ -171,11 +171,17 @@ export function buildWorkflow(graph: WorkflowGraph): { file: GeneratedFile; rawR
     if (line.raw && line.text.length > 0) {
       rawRegions.push({ start, end: content.length });
     } else if (line.exempt) {
-      // Exempt each verbatim promptExpr substring's byte-span within this line.
+      // Exempt each verbatim promptExpr's byte-span. A promptExpr is always emitted
+      // as the FIRST argument of an `agent(` call, so anchor the search on the token
+      // `agent(<frag>` — not a bare indexOf(frag), which could mis-hit the same text
+      // earlier in the line (e.g. inside the binding name; B10).
       for (const frag of line.exempt) {
         if (!frag) continue;
-        const at = line.text.indexOf(frag);
-        if (at >= 0) rawRegions.push({ start: start + at, end: start + at + frag.length });
+        const anchor = line.text.indexOf(`agent(${frag}`);
+        if (anchor >= 0) {
+          const at = anchor + 'agent('.length;
+          rawRegions.push({ start: start + at, end: start + at + frag.length });
+        }
       }
     }
     content += '\n';
