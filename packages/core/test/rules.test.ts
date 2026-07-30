@@ -236,6 +236,47 @@ describe('CF008 rename quick fix', () => {
   });
 });
 
+describe('CF606 return counting with raw blocks (B2)', () => {
+  it('accepts a raw block whose code ends in a return as the sole sink', () => {
+    const graph = g(
+      [n.meta('meta', { name: 't', description: 'd' }),
+       n.raw('raw', { code: 'const r = 1\nreturn { r }', produces: ['r'] }, 'code')],
+      [e('meta', 'raw')],
+    );
+    expect(idsFor(graph)).not.toContain('CF606');
+  });
+
+  it('fires when a raw return coexists with an output.return (two returns)', () => {
+    const graph = g(
+      [n.meta('meta', { name: 't', description: 'd' }),
+       n.raw('raw', { code: 'return 1', produces: [] }, 'code'),
+       n.agent('a', { prompt: 'x' }),
+       n.ret('ret', { source: 'a', transform: 'none' })],
+      [e('meta', 'raw'), e('raw', 'a'), e('a', 'ret')],
+    );
+    expect(idsFor(graph)).toContain('CF606');
+  });
+
+  it('fires when the returning raw block is not the final node', () => {
+    const graph = g(
+      [n.meta('meta', { name: 't', description: 'd' }),
+       n.raw('raw', { code: 'return 1', produces: [] }, 'code'),
+       n.agent('a', { prompt: 'x' })],
+      [e('meta', 'raw'), e('raw', 'a')],
+    );
+    expect(idsFor(graph)).toContain('CF606');
+  });
+
+  it('fires when a raw block has more than one top-level return', () => {
+    const graph = g(
+      [n.meta('meta', { name: 't', description: 'd' }),
+       n.raw('raw', { code: 'return 1\nreturn 2', produces: [] }, 'code')],
+      [e('meta', 'raw')],
+    );
+    expect(idsFor(graph)).toContain('CF606');
+  });
+});
+
 describe('CF610 is an ackable warning', () => {
   it('produces a warn that the export gate can ack', () => {
     const graph = fixtures.CF610.hit;

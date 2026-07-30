@@ -238,4 +238,20 @@ describe('emitWorkflow', () => {
     ));
     expect(out.content).toContain('.filter(Boolean)');
   });
+
+  it('emits a raw node’s code VERBATIM at its position (M7)', () => {
+    const code = 'const merged = [research].flat()\n// keep this note\nconst count = merged.length';
+    const out = file(g(
+      [n.meta('meta', { name: 't', description: 'd' }),
+       n.agent('research', { prompt: 'Research.' }),
+       n.raw('raw', { code, produces: ['merged', 'count'] }, 'code'),
+       n.ret('ret', { source: 'research', transform: 'none' })],
+      [e('meta', 'research'), e('research', 'raw'), e('raw', 'ret')],
+    ));
+    // The raw block is emitted exactly as authored (including its inline comment).
+    expect(out.content).toContain(code);
+    // It sits after its producing agent and before the return.
+    expect(out.content.indexOf('const research')).toBeLessThan(out.content.indexOf('const merged'));
+    expect(out.content.indexOf('const merged')).toBeLessThan(out.content.indexOf('return research'));
+  });
 });

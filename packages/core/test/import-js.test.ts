@@ -79,6 +79,65 @@ describe('parseWorkflowJs — real hand-authored workflow (ironclad)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Round-trip fidelity regressions (from the M7 code review).
+// ---------------------------------------------------------------------------
+describe('parseWorkflowJs — round-trip fidelity', () => {
+  it('B1: a prompt ref to a RAW-declared binding re-emits verbatim, never literal {{…}}', () => {
+    const src = [
+      "export const meta = { name: 'demo', description: 'd' }",
+      'const topic = args.topic', // → raw node, produces ['topic']
+      'const summary = await agent(`Summarize ${topic} now.`)',
+      'return summary',
+      '',
+    ].join('\n');
+    const g = parseWorkflowJs(src, 'demo')!;
+    const out = jsOf(generate(g));
+    expect(out).toContain('${topic}'); // preserved as an interpolation
+    expect(out).not.toContain('{{topic}}'); // NOT corrupted into literal text
+  });
+
+  it('B1: a JSON.stringify ref to a raw binding also stays verbatim', () => {
+    const src = [
+      "export const meta = { name: 'demo', description: 'd' }",
+      'const ctx = args.ctx',
+      'const out = await agent(`Use ${JSON.stringify(ctx)}.`)',
+      'return out',
+      '',
+    ].join('\n');
+    const out = jsOf(generate(parseWorkflowJs(src, 'demo')!));
+    expect(out).toContain('${JSON.stringify(ctx)}');
+    expect(out).not.toContain('{{ctx}}');
+  });
+
+  it('M1: destructuring defaults + array rest are captured in produces', () => {
+    const src = [
+      "export const meta = { name: 'demo', description: 'd' }",
+      "const { topic = 'x' } = args",
+      'const [first, ...rest] = args.items',
+      'return { topic, first, rest }',
+      '',
+    ].join('\n');
+    const g = parseWorkflowJs(src, 'demo')!;
+    const raw = g.nodes.find((n) => n.kind === 'raw')!;
+    if (raw.kind !== 'raw') throw new Error('kind');
+    expect(raw.data.produces).toEqual(expect.arrayContaining(['topic', 'first', 'rest']));
+  });
+
+  it('M3: interstitial comments inside a raw group are preserved on re-export', () => {
+    const src = [
+      "export const meta = { name: 'demo', description: 'd' }",
+      'const a = 1',
+      '// IMPORTANT: keep this comment',
+      'const b = 2',
+      'return { a, b }',
+      '',
+    ].join('\n');
+    const out = jsOf(generate(parseWorkflowJs(src, 'demo')!));
+    expect(out).toContain('// IMPORTANT: keep this comment');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Not-a-workflow inputs.
 // ---------------------------------------------------------------------------
 describe('parseWorkflowJs — non-workflows', () => {

@@ -105,6 +105,14 @@ return audits.filter(Boolean)
 Primitives: `agent(prompt, opts?)` spawns ONE subagent — opts seen in docs: `schema` (JSON-Schema
 for structured output), `label`, and per-stage `model` routing. `pipeline(items, fn)` runs one
 agent per item. `return` yields the final report. Runtime caps: ≤16 concurrent agents, 1000/run.
+
+Additional runtime globals observed in real authored workflows (available to a script's top-level
+scope alongside `agent`/`pipeline`/`args`): `parallel(fns)` (run several agents concurrently and
+collect results), `phase(title)` (mark a progress phase in the runtime feed), and `log(…)` (emit a
+diagnostic line). The importer's self-lint allowlist includes these so hand-authored scripts using
+them validate; `agent` opts beyond `schema`/`label`/`model` (e.g. `phase`, `effort`, `agentType`)
+appear in real scripts too — the node-graph designer models only `schema`/`label`/`model`, and any
+call using others is preserved verbatim in a `raw` node rather than typed.
 Canonical shapes the docs list: single agent; fan-out; review/merge (agent after a pipeline);
 adversarial verify; loop-until-check ("keep fixing until a check passes or two rounds make no
 progress"). Every agent uses the session model unless the script routes a stage or

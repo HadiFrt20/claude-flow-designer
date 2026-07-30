@@ -21,10 +21,6 @@ function as<T>(node: unknown): T {
   return node as T;
 }
 
-function slice(src: string, node: acorn.Node): string {
-  return src.slice(node.start, node.end);
-}
-
 /** camelCase-ish → a readable label; falls back to the id. */
 function labelFor(binding: string | undefined, kind: string): string {
   if (!binding) return kind;
@@ -54,18 +50,29 @@ function templateToPrompt(node: Node | undefined, src: string, locals: Set<strin
   return out;
 }
 
+/**
+ * A `{{ref}}` may only be reconstructed for names the EMITTER can resolve back to
+ * `${…}`: `args`, the active per-call local (`item`/`check`), and typed-node
+ * bindings (a ref's head must be a node id). A name declared by a raw block is NOT
+ * resolvable — reconstructing it would emit literal `{{name}}` text, silently
+ * corrupting the prompt (B1). `locals` holds exactly the resolvable names.
+ */
+function resolvable(name: string, locals: Set<string>): boolean {
+  return name === 'args' || locals.has(name);
+}
+
 function interpolationToRef(expr: Node, locals: Set<string>): string | null {
-  // ${item} / ${check} → a known local
+  // ${item} / ${check} / ${bind} → a resolvable identifier
   if (expr.type === 'Identifier') {
-    const name = expr.name as string;
-    return locals.has(name) ? name : null;
+    return resolvable(expr.name as string, locals) ? (expr.name as string) : null;
   }
-  // ${bind.field} → bind.field (member chain of identifiers)
+  // ${bind.field} → bind.field (member chain of identifiers, head resolvable)
   if (expr.type === 'MemberExpression') {
     const path = memberPath(expr);
-    return path;
+    if (!path) return null;
+    return resolvable(path.split('.')[0]!, locals) ? path : null;
   }
-  // ${JSON.stringify(x)} → x (whole-object ref) or the local
+  // ${JSON.stringify(x)} → x (whole-object ref), head resolvable
   if (expr.type === 'CallExpression') {
     const callee = expr.callee as Node;
     const args = expr.arguments as Node[];
@@ -76,8 +83,12 @@ function interpolationToRef(expr: Node, locals: Set<string>): string | null {
       args.length === 1
     ) {
       const a = args[0]!;
-      if (a.type === 'Identifier') return a.name as string; // {{bind}} or {{args}}
-      if (a.type === 'MemberExpression') return memberPath(a);
+      if (a.type === 'Identifier') return resolvable(a.name as string, locals) ? (a.name as string) : null;
+      if (a.type === 'MemberExpression') {
+        const path = memberPath(a);
+        if (!path) return null;
+        return resolvable(path.split('.')[0]!, locals) ? path : null;
+      }
     }
   }
   return null;
@@ -103,11 +114,26 @@ function memberPath(node: Node): string | null {
 function declaredNames(stmt: Node): string[] {
   const out: string[] = [];
   const addPattern = (pat: Node): void => {
-    if (pat.type === 'Identifier') out.push(pat.name as string);
-    else if (pat.type === 'ObjectPattern') for (const p of pat.properties as Node[]) {
-      const v = (p as { value?: Node; argument?: Node }).value ?? (p as { argument?: Node }).argument;
-      if (v) addPattern(v);
-    } else if (pat.type === 'ArrayPattern') for (const el of (pat.elements as (Node | null)[])) if (el) addPattern(el);
+    switch (pat.type) {
+      case 'Identifier':
+        out.push(pat.name as string);
+        break;
+      case 'ObjectPattern':
+        for (const p of pat.properties as Node[]) {
+          const v = (p as { value?: Node; argument?: Node }).value ?? (p as { argument?: Node }).argument;
+          if (v) addPattern(v);
+        }
+        break;
+      case 'ArrayPattern':
+        for (const el of (pat.elements as (Node | null)[])) if (el) addPattern(el);
+        break;
+      case 'AssignmentPattern': // const { x = 1 } = …
+        addPattern(as<{ left: Node }>(pat).left);
+        break;
+      case 'RestElement': // const [a, ...rest] = …
+        addPattern(as<{ argument: Node }>(pat).argument);
+        break;
+    }
   };
   if (stmt.type === 'VariableDeclaration') for (const d of stmt.declarations as { id: Node }[]) addPattern(d.id);
   else if (stmt.type === 'FunctionDeclaration' || stmt.type === 'ClassDeclaration') {
@@ -224,7 +250,10 @@ export function parseWorkflowJs(source: string, slug = 'imported'): WorkflowGrap
 
   const body = program.body as Node[];
   const built: Built = { nodes: [], order: [] };
-  const locals = new Set<string>(); // 'args' is implicit; pipeline/loop add item/check within
+  // Names a prompt {{ref}} may resolve to (emitter-resolvable): 'args' (implicit),
+  // per-call locals (item/check), and TYPED-node bindings. Raw `produces` names are
+  // deliberately NOT here — a ref to one can't be re-emitted, so it stays raw (B1).
+  const locals = new Set<string>();
   let metaName = slug;
   let metaDesc = '';
   let sawMeta = false;
@@ -238,21 +267,23 @@ export function parseWorkflowJs(source: string, slug = 'imported'): WorkflowGrap
     return id;
   };
   const push = (n: WorkflowNode): void => { built.nodes.push(n); built.order.push(n.id); };
-  // A buffer of consecutive un-typed statements collapses into ONE raw node.
-  let rawBuf: { code: string[]; produces: string[] } | null = null;
+  // A run of consecutive un-typed statements collapses into ONE raw node, sliced
+  // as a single span [firstStart, lastEnd] so interstitial comments/blank lines are
+  // preserved verbatim (M3). `produces` accumulates every binding they declare.
+  let rawBuf: { start: number; end: number; produces: string[] } | null = null;
   const flushRaw = (): void => {
     if (!rawBuf) return;
     const id = freshId('raw');
     push({ id, kind: 'raw', label: 'code', position: POS, data: {
-      code: rawBuf.code.join('\n'),
+      code: source.slice(rawBuf.start, rawBuf.end),
       ...(rawBuf.produces.length ? { produces: rawBuf.produces } : {}),
     } as RawData });
     rawBuf = null;
   };
   const toRaw = (stmt: Node): void => {
-    if (!rawBuf) rawBuf = { code: [], produces: [] };
-    rawBuf.code.push(slice(source, stmt));
-    for (const name of declaredNames(stmt)) { rawBuf.produces.push(name); locals.add(name); }
+    if (!rawBuf) rawBuf = { start: stmt.start, end: stmt.end, produces: [] };
+    else rawBuf.end = stmt.end; // extend the span to include trivia between statements
+    for (const name of declaredNames(stmt)) rawBuf.produces.push(name);
   };
 
   for (const stmt of body) {

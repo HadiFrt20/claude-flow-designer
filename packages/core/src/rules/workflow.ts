@@ -10,15 +10,27 @@ import { DOCS_URLS, KNOWN_MODELS } from './helpers.js';
 import { addNode, freshId, patchNodeData, removeNode } from './quickfix-utils.js';
 
 /**
- * Does a `raw` node's code contain a top-level `return`? Imported workflows whose
- * return value is a complex expression (e.g. `return { a, b }`) keep the return
- * inside a raw block rather than an output.return node, and that still satisfies
- * the "workflow has a return" invariant (CF606).
+ * How many top-level `return` statements a `raw` node's code contains. Imported
+ * workflows whose return value is a complex expression (e.g. `return { a, b }`)
+ * keep the return inside a raw block rather than an output.return node, and that
+ * still satisfies the "workflow has a return" invariant (CF606) — but only if the
+ * TOTAL number of returns across the graph is exactly one and it is the last
+ * statement (mirrors the self-lint invariants so the gate rejects, not self-lint).
  */
-function rawHasReturn(code: string): boolean {
+function rawReturnCount(code: string): number {
   try {
     const prog = acorn.parse(code, { ecmaVersion: 'latest', sourceType: 'module', allowAwaitOutsideFunction: true, allowReturnOutsideFunction: true });
-    return prog.body.some((s) => s.type === 'ReturnStatement');
+    return prog.body.filter((s) => s.type === 'ReturnStatement').length;
+  } catch {
+    return 0;
+  }
+}
+
+/** True when a raw node's code ends with a top-level `return` (it can be the sink). */
+function rawReturnIsLast(code: string): boolean {
+  try {
+    const prog = acorn.parse(code, { ecmaVersion: 'latest', sourceType: 'module', allowAwaitOutsideFunction: true, allowReturnOutsideFunction: true });
+    return prog.body.length > 0 && prog.body[prog.body.length - 1]!.type === 'ReturnStatement';
   } catch {
     return false;
   }
@@ -193,19 +205,44 @@ const cf606: Rule = {
   id: 'CF606',
   severity: 'error',
   run(graph) {
+    const diags: Diagnostic[] = [];
     const returns = nodesOfKind(graph, 'output.return');
-    // A raw block that itself contains a top-level `return` (imported complex
-    // return expression) is an alternative, valid sink.
-    const rawReturns = nodesOfKind(graph, 'raw').filter((n) => rawHasReturn(n.data.code));
-    if (returns.length === 0) {
-      if (rawReturns.length >= 1) return []; // the raw block returns
-      return [{ ruleId: 'CF606', severity: 'error', message: 'Workflow has no output.return node.', docsUrl: DOCS_URLS.workflows }];
+    // A raw block may carry the return(s) inside its code (imported complex return
+    // expression). Both node kinds count toward the "exactly one, and last" invariant
+    // — mirror self-lint here so the GATE rejects, not self-lint (B2).
+    const rawNodes = nodesOfKind(graph, 'raw');
+    const rawReturnTotal = rawNodes.reduce((sum, n) => sum + rawReturnCount(n.data.code), 0);
+    const total = returns.length + rawReturnTotal;
+
+    if (total === 0) {
+      return [{ ruleId: 'CF606', severity: 'error', message: 'Workflow has no return (add an output.return node).', docsUrl: DOCS_URLS.workflows }];
     }
-    const diags: Diagnostic[] = returns.slice(1).map((n) => ({ ruleId: 'CF606', severity: 'error', nodeId: n.id, message: 'More than one output.return node.', docsUrl: DOCS_URLS.workflows }));
-    // A return must be a sink (no outgoing edges).
+    if (total > 1) {
+      // Report on the extra output.return nodes (deterministic anchor); raw-return
+      // over-count still surfaces here as a graph-level error.
+      for (const n of returns.slice(returns.length > 1 ? 1 : 0)) {
+        diags.push({ ruleId: 'CF606', severity: 'error', nodeId: n.id, message: `Workflow has more than one return (found ${total}).`, docsUrl: DOCS_URLS.workflows });
+      }
+      if (diags.length === 0) {
+        diags.push({ ruleId: 'CF606', severity: 'error', message: `Workflow has more than one return (found ${total}).`, docsUrl: DOCS_URLS.workflows });
+      }
+      return diags;
+    }
+
+    // Exactly one return. It must be the topological sink (last node, no outgoing edges).
+    const order = topoOrder(graph);
+    const lastId = order[order.length - 1];
     for (const r of returns) {
       if (graph.edges.some((e) => e.source === r.id)) {
         diags.push({ ruleId: 'CF606', severity: 'error', nodeId: r.id, message: 'output.return has outgoing edges (must be the final node).', docsUrl: DOCS_URLS.workflows });
+      }
+    }
+    // If the single return lives in a raw block, that block must be last AND end
+    // with the return (so the emitted script's return is the final statement).
+    const rawReturnNode = rawNodes.find((n) => rawReturnCount(n.data.code) > 0);
+    if (rawReturnNode) {
+      if (rawReturnNode.id !== lastId || !rawReturnIsLast(rawReturnNode.data.code)) {
+        diags.push({ ruleId: 'CF606', severity: 'error', nodeId: rawReturnNode.id, message: 'The returning raw block must be the final node and end with its return.', docsUrl: DOCS_URLS.workflows });
       }
     }
     return diags;
@@ -452,7 +489,7 @@ const cf616: Rule = {
         ruleId: 'CF616',
         severity: 'info',
         nodeId: n.id,
-        message: 'Imported code the designer could not model as typed nodes — kept verbatim and editable as text; re-exported unchanged.',
+        message: 'Imported code the designer could not model as typed nodes — kept verbatim and editable as text; its source (incl. interstitial comments) is re-emitted as-is.',
         docsUrl: DOCS_URLS.workflows,
       }),
     );
