@@ -5,7 +5,7 @@ import type { GeneratedFile } from '../schema/types.js';
 import type { WorkflowGraph } from '../schema/graph.js';
 import { validateGraph, exportGate } from '../validate.js';
 import { serializeGraph } from '../schema/graph.js';
-import { emitWorkflow } from './workflow.js';
+import { buildWorkflow } from './workflow.js';
 import { selfLint } from './self-lint.js';
 
 export class ExportGateError extends Error {
@@ -40,18 +40,20 @@ export function generate(graph: WorkflowGraph, opts: GenerateOptions = {}): Gene
   const gate = exportGate(diags, acked);
   if (!gate.ok) throw new ExportGateError(gate.blocking);
 
-  // 3. emit — the workflow script + the round-trip sidecar.
-  const files: GeneratedFile[] = [emitWorkflow(graph)];
+  // 3. emit — the workflow script (with exact raw byte spans) + round-trip sidecar.
+  const built = buildWorkflow(graph);
+  const files: GeneratedFile[] = [built.file];
   if (includeGraphFile) {
     files.push({ path: `${graph.meta.slug}.clauflow.json`, content: serializeGraph(graph) });
   }
 
   // 4. self-lint (throws on any malformed artifact) + deterministic ordering.
-  // Raw-node code is opaque verbatim user JS — exempt its identifiers from the
-  // undefined-identifier check (it may use any JS global; B3).
-  const rawCode = graph.nodes.filter((n) => n.kind === 'raw').map((n) => n.data.code);
+  // Raw-node code is opaque verbatim user JS — the emitter records its exact byte
+  // ranges (accurate even for identical/indented raw blocks; B3/B4), and self-lint
+  // exempts identifiers inside them from the undefined-identifier check.
+  const rawRegionsByPath = new Map<string, { start: number; end: number }[]>([[built.file.path, built.rawRegions]]);
   const ordered = sortFiles(files);
-  selfLint(ordered, rawCode);
+  selfLint(ordered, rawRegionsByPath);
   return ordered;
 }
 

@@ -153,6 +153,25 @@ describe('parseWorkflowJs — round-trip fidelity', () => {
     expect(out).toContain('throw new Error');
     expect(out).toContain('parseInt(args.n, 10)');
   });
+
+  it('B4: two identical raw blocks are both exempt (no SelfLintError)', () => {
+    // A repeated un-typed line (e.g. a progress marker) produces two identical raw
+    // nodes. Emitter records each block's exact span, so BOTH are exempt — the
+    // second no longer falls to the strict check and crash generate().
+    const src = [
+      "export const meta = { name: 'analyze', description: 'd' }",
+      "phase('start')", // runtime global, not allowlisted → must be exempt
+      'const a = await agent(`step 1`)',
+      "phase('start')", // identical raw line → a second raw node
+      'const b = await agent(`step 2`)',
+      'return b',
+      '',
+    ].join('\n');
+    const g = parseWorkflowJs(src, 'analyze')!;
+    expect(g.nodes.filter((n) => n.kind === 'raw')).toHaveLength(2);
+    const out = jsOf(generate(g)); // must not throw
+    expect((out.match(/phase\('start'\)/g) ?? []).length).toBe(2);
+  });
 });
 
 // ---------------------------------------------------------------------------

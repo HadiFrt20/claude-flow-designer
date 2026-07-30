@@ -154,9 +154,15 @@ describe('selfLint workflow script', () => {
     expect(() => selfLint([ok({ path: '.claude/workflows/x.js', content: bad })])).toThrow(/trailing newline/);
   });
 
+  // Region [start,end) of a snippet within src, as the emitter would record it.
+  const regionOf = (src: string, snip: string, path = '.claude/workflows/x.js') => {
+    const at = src.indexOf(snip);
+    return new Map([[path, [{ start: at, end: at + snip.length }]]]);
+  };
+
   it('exempts identifiers inside a raw region from resolution (B3)', () => {
     // The raw snippet uses `Error`/`parseInt`, which are NOT in the allowlist —
-    // passing it as raw code exempts them; without the exemption this would throw.
+    // exempting its byte range lets it pass; without the exemption it would throw.
     const rawSnippet = "if (!args.n) { throw new Error('x') }\nconst count = parseInt(args.n, 10)";
     const src = [
       'export const meta = { name: "t", description: "d" }',
@@ -166,8 +172,8 @@ describe('selfLint workflow script', () => {
       '',
     ].join('\n');
     // Exempt → passes.
-    expect(() => selfLint([ok({ path: '.claude/workflows/x.js', content: src })], [rawSnippet])).not.toThrow();
-    // NOT exempt (no rawCode passed) → the strict check catches the undefined global.
+    expect(() => selfLint([ok({ path: '.claude/workflows/x.js', content: src })], regionOf(src, rawSnippet))).not.toThrow();
+    // NOT exempt (no regions passed) → the strict check catches the undefined global.
     expect(() => selfLint([ok({ path: '.claude/workflows/x.js', content: src })])).toThrow(/undefined identifier/);
   });
 
@@ -181,6 +187,6 @@ describe('selfLint workflow script', () => {
       'return r',
       '',
     ].join('\n');
-    expect(() => selfLint([ok({ path: '.claude/workflows/x.js', content: src })], [rawSnippet])).toThrow(/undefined identifier "nope"/);
+    expect(() => selfLint([ok({ path: '.claude/workflows/x.js', content: src })], regionOf(src, rawSnippet))).toThrow(/undefined identifier "nope"/);
   });
 });

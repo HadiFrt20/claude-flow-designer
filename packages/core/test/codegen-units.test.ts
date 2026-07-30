@@ -254,4 +254,20 @@ describe('emitWorkflow', () => {
     expect(out.content.indexOf('const research')).toBeLessThan(out.content.indexOf('const merged'));
     expect(out.content.indexOf('const merged')).toBeLessThan(out.content.indexOf('return research'));
   });
+
+  it('indents EVERY line of a multi-line raw node inside a branch arm (m1)', () => {
+    const out = file(g(
+      [n.meta('meta', { name: 't', description: 'd' }),
+       n.agent('rev', { prompt: 'Review.', schema: { type: 'object', properties: { ok: { type: 'boolean' } } } }),
+       n.branch('br', { source: 'rev', field: 'ok' }),
+       n.raw('raw', { code: 'const n2 = 1\nconsole.log(n2)', produces: ['n2'] }, 'code'),
+       n.agent('other', { prompt: 'Else.' }),
+       n.ret('ret', { source: 'rev', transform: 'none' })],
+      [e('meta', 'rev'), e('rev', 'br'), e('br', 'raw', 'then'), e('br', 'other', 'else'), e('br', 'ret')],
+    ));
+    const lines = out.content.split('\n');
+    // BOTH raw lines are indented inside the `if` block (not just the first).
+    expect(lines.find((l) => l.includes('const n2 = 1'))).toMatch(/^ {2}const n2 = 1$/);
+    expect(lines.find((l) => l.includes('console.log(n2)'))).toMatch(/^ {2}console\.log\(n2\)$/);
+  });
 });
