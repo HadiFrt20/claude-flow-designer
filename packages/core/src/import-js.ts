@@ -8,7 +8,7 @@
 // graph; the .clauflow.json sidecar is a derived projection, not a user artifact.
 import * as acorn from 'acorn';
 import type { WorkflowGraph, Edge } from './schema/graph.js';
-import type { WorkflowNode, AgentData, PipelineData, ReturnData, RawData } from './schema/nodes.js';
+import type { WorkflowNode, AgentData, PipelineData, ParallelData, ReturnData, RawData } from './schema/nodes.js';
 
 const POS = { x: 0, y: 0 }; // canvas auto-layout assigns real positions on load
 
@@ -37,13 +37,13 @@ function labelFor(binding: string | undefined, kind: string): string {
  *   ${item} / ${JSON.stringify(check)} inside a pipeline/loop local → {{item}}/{{check}}
  * Returns null if any interpolation is not one of these (→ caller falls back to raw).
  */
-function templateToPrompt(node: Node | undefined, src: string, locals: Set<string>): string | null {
+function templateToPrompt(node: Node | undefined, src: string, refs: Refs): string | null {
   if (!node || node.type !== 'TemplateLiteral') return null;
   const quasis = node.quasis as { value: { cooked: string } }[];
   const exprs = node.expressions as Node[];
   let out = quasis[0]?.value.cooked ?? '';
   for (let i = 0; i < exprs.length; i++) {
-    const ref = interpolationToRef(exprs[i]!, locals);
+    const ref = interpolationToRef(exprs[i]!, refs);
     if (ref === null) return null;
     out += `{{${ref}}}` + (quasis[i + 1]?.value.cooked ?? '');
   }
@@ -51,28 +51,30 @@ function templateToPrompt(node: Node | undefined, src: string, locals: Set<strin
 }
 
 /**
- * A `{{ref}}` may only be reconstructed for names the EMITTER can resolve back to
- * `${…}`: `args`, the active per-call local (`item`/`check`), and typed-node
- * bindings (a ref's head must be a node id). A name declared by a raw block is NOT
- * resolvable — reconstructing it would emit literal `{{name}}` text, silently
- * corrupting the prompt (B1). `locals` holds exactly the resolvable names.
+ * The names a `{{ref}}` may reconstruct, split by the EXACT JS shape the emitter
+ * produces for each — so parse↔emit is a precise inverse (no round-trip loss):
+ *   - `bare` (per-call locals like item/check, and RAW-declared consts): the
+ *     emitter writes `${name}` / `${name.field}`, so we accept ONLY that bare form.
+ *   - `node` (typed-node bindings): the emitter writes `${JSON.stringify(bind)}` for
+ *     a whole ref and `${bind.field}` for a field, so we accept those two forms.
+ *   - `args` is special: `${JSON.stringify(args)}` (whole) or `${args.field}`.
+ * A name in neither set is NOT reconstructable — the call falls back to raw (B1).
  */
-function resolvable(name: string, locals: Set<string>): boolean {
-  return name === 'args' || locals.has(name);
-}
+interface Refs { bare: Set<string>; node: Set<string> }
 
-function interpolationToRef(expr: Node, locals: Set<string>): string | null {
-  // ${item} / ${check} / ${bind} → a resolvable identifier
+function interpolationToRef(expr: Node, refs: Refs): string | null {
+  // Bare `${name}` — a local or a raw-declared binding only (emitter writes bare).
   if (expr.type === 'Identifier') {
-    return resolvable(expr.name as string, locals) ? (expr.name as string) : null;
+    return refs.bare.has(expr.name as string) ? (expr.name as string) : null;
   }
-  // ${bind.field} → bind.field (member chain of identifiers, head resolvable)
+  // `${name.field}` — a node binding, raw binding, or args (all emit `${name.field}`).
   if (expr.type === 'MemberExpression') {
     const path = memberPath(expr);
     if (!path) return null;
-    return resolvable(path.split('.')[0]!, locals) ? path : null;
+    const head = path.split('.')[0]!;
+    return (refs.node.has(head) || refs.bare.has(head) || head === 'args') ? path : null;
   }
-  // ${JSON.stringify(x)} → x (whole-object ref), head resolvable
+  // `${JSON.stringify(x)}` — args or a node binding (whole-object ref). NOT bare/raw.
   if (expr.type === 'CallExpression') {
     const callee = expr.callee as Node;
     const args = expr.arguments as Node[];
@@ -80,15 +82,10 @@ function interpolationToRef(expr: Node, locals: Set<string>): string | null {
       callee.type === 'MemberExpression' &&
       callee.object.type === 'Identifier' && callee.object.name === 'JSON' &&
       callee.property.name === 'stringify' &&
-      args.length === 1
+      args.length === 1 && (args[0] as Node).type === 'Identifier'
     ) {
-      const a = args[0]!;
-      if (a.type === 'Identifier') return resolvable(a.name as string, locals) ? (a.name as string) : null;
-      if (a.type === 'MemberExpression') {
-        const path = memberPath(a);
-        if (!path) return null;
-        return resolvable(path.split('.')[0]!, locals) ? path : null;
-      }
+      const name = (args[0] as Node).name as string;
+      return (name === 'args' || refs.node.has(name)) ? name : null;
     }
   }
   return null;
@@ -154,35 +151,56 @@ function agentCall(node: Node): Node | null {
   return callee.type === 'Identifier' && callee.name === 'agent' ? node : null;
 }
 
-/** Parse the opts ObjectExpression of an agent() call: schema/label/model. */
+interface ParsedOpts {
+  schema?: Record<string, unknown>;
+  label?: string;
+  model?: string;
+  extraOpts?: Record<string, string>;
+}
+
+/**
+ * Parse the opts ObjectExpression of an agent() call. schema/label/model are
+ * modeled as typed fields; ANY OTHER opt key (phase/effort/agentType/…) is
+ * preserved verbatim (its value as JS source) in `extraOpts` so the call still
+ * types instead of falling to raw. Returns null only when a key/value can't be
+ * safely round-tripped (computed keys, spreads, a non-round-trippable label).
+ */
 function parseAgentOpts(
   optsNode: Node | undefined,
   src: string,
-  locals: Set<string>,
-): { schema?: Record<string, unknown>; label?: string; model?: string } | null {
+  refs: Refs,
+): ParsedOpts | null {
   if (!optsNode) return {};
   if (optsNode.type !== 'ObjectExpression') return null;
-  const out: { schema?: Record<string, unknown>; label?: string; model?: string } = {};
+  const out: ParsedOpts = {};
+  const extra: Record<string, string> = {};
   for (const prop of optsNode.properties as Node[]) {
-    if (prop.type !== 'Property' || (prop.computed as boolean)) return null;
-    const key = ((prop.key as Node).type === 'Identifier' ? (prop.key as Node).name : null);
+    if (prop.type !== 'Property' || (prop.computed as boolean)) return null; // spread / computed key → raw
+    const key = (prop.key as Node).type === 'Identifier' ? ((prop.key as Node).name as string)
+      : (prop.key as Node).type === 'Literal' ? String((prop.key as Node).value) : null;
+    if (key === null) return null;
     const val = prop.value as Node;
     if (key === 'schema') {
       const parsed = jsonLiteral(val, src);
-      if (parsed === undefined) return null;
+      if (parsed === undefined) { extra[key] = src.slice(val.start, val.end); continue; } // non-literal schema → passthrough
       out.schema = parsed as Record<string, unknown>;
     } else if (key === 'label') {
-      const lab = val.type === 'TemplateLiteral' ? templateToPrompt(val, src, locals) : jsonStringLiteral(val);
-      if (lab === null) return null;
-      out.label = lab;
+      // A template/string label becomes the typed label (ref-resolved); any other
+      // expression is preserved verbatim as a passthrough opt.
+      const lab = val.type === 'TemplateLiteral' ? templateToPrompt(val, src, refs)
+        : jsonStringLiteral(val);
+      if (lab === null) extra[key] = src.slice(val.start, val.end);
+      else out.label = lab;
     } else if (key === 'model') {
       const m = jsonStringLiteral(val);
-      if (m === null) return null;
-      out.model = m;
+      if (m === null) extra[key] = src.slice(val.start, val.end);
+      else out.model = m;
     } else {
-      return null; // an opts key we don't model → fall back to raw
+      // Unmodeled opt (phase/effort/agentType/…): keep its value as verbatim JS.
+      extra[key] = src.slice(val.start, val.end);
     }
   }
+  if (Object.keys(extra).length) out.extraOpts = extra;
   return out;
 }
 
@@ -250,10 +268,11 @@ export function parseWorkflowJs(source: string, slug = 'imported'): WorkflowGrap
 
   const body = program.body as Node[];
   const built: Built = { nodes: [], order: [] };
-  // Names a prompt {{ref}} may resolve to (emitter-resolvable): 'args' (implicit),
-  // per-call locals (item/check), and TYPED-node bindings. Raw `produces` names are
-  // deliberately NOT here — a ref to one can't be re-emitted, so it stays raw (B1).
-  const locals = new Set<string>();
+  // Names a prompt {{ref}} may resolve to, split by emit shape (see Refs):
+  //   node  = typed-node bindings → `${JSON.stringify(bind)}` / `${bind.field}`
+  //   bare  = raw-declared consts → `${name}` / `${name.field}` (verbatim)
+  // (per-call item/check locals are added transiently in parseMappedAgent).
+  const refs: Refs = { bare: new Set(), node: new Set() };
   let metaName = slug;
   let metaDesc = '';
   let sawMeta = false;
@@ -267,23 +286,29 @@ export function parseWorkflowJs(source: string, slug = 'imported'): WorkflowGrap
     return id;
   };
   const push = (n: WorkflowNode): void => { built.nodes.push(n); built.order.push(n.id); };
-  // A run of consecutive un-typed statements collapses into ONE raw node, sliced
-  // as a single span [firstStart, lastEnd] so interstitial comments/blank lines are
-  // preserved verbatim (M3). `produces` accumulates every binding they declare.
-  let rawBuf: { start: number; end: number; produces: string[] } | null = null;
-  const flushRaw = (): void => {
-    if (!rawBuf) return;
-    const id = freshId('raw');
-    push({ id, kind: 'raw', label: 'code', position: POS, data: {
-      code: source.slice(rawBuf.start, rawBuf.end),
-      ...(rawBuf.produces.length ? { produces: rawBuf.produces } : {}),
-    } as RawData });
-    rawBuf = null;
-  };
-  const toRaw = (stmt: Node): void => {
-    if (!rawBuf) rawBuf = { start: stmt.start, end: stmt.end, produces: [] };
-    else rawBuf.end = stmt.end; // extend the span to include trivia between statements
-    for (const name of declaredNames(stmt)) rawBuf.produces.push(name);
+  // M8: ONE node per top-level statement (no merging). An un-typed statement becomes
+  // its own `raw` node spanning [after the previous statement … its own end], with
+  // leading blank lines trimmed — so a comment ABOVE a statement attaches to its node
+  // (M3) without inheriting a blank separator. `cursor` is the byte after the last
+  // statement consumed (typed or raw).
+  let cursor = 0;
+  const emitRaw = (stmt: Node): void => {
+    // Prefix any leading trivia (a comment above the statement) between the previous
+    // statement and this one, with surrounding blank lines trimmed, so the comment
+    // travels with its statement (M3) but no blank separator leaks in.
+    const lead = source.slice(cursor, stmt.start).trim();
+    const own = source.slice(stmt.start, stmt.end);
+    const code = lead ? `${lead}\n${own}` : own;
+    const names = declaredNames(stmt);
+    // A raw block emitted here is UPSTREAM of every later statement (linear chain),
+    // so a later typed prompt may reference its bindings via a BARE {{name}} —
+    // codegen re-emits `${name}` and CF605 confirms upstream-ness. (Safe, unlike
+    // B1: the binding provably exists upstream.)
+    for (const nm of names) refs.bare.add(nm);
+    push({
+      id: freshId('raw'), kind: 'raw', label: 'code', position: POS,
+      data: { code, ...(names.length ? { produces: names } : {}) } as RawData,
+    });
   };
 
   for (const stmt of body) {
@@ -303,13 +328,14 @@ export function parseWorkflowJs(source: string, slug = 'imported'): WorkflowGrap
             if (k === 'description' && v !== null) metaDesc = v;
           }
         }
+        cursor = stmt.end;
         continue; // meta becomes the workflow.meta node, added first below
       }
-      toRaw(stmt);
+      emitRaw(stmt); cursor = stmt.end;
       continue;
     }
 
-    // const x = await agent(...) | await pipeline(...)
+    // const x = await agent(...) | await pipeline(...) | await parallel(...)
     if (stmt.type === 'VariableDeclaration') {
       const decls = stmt.declarations as { id: Node; init?: Node }[];
       const d = decls.length === 1 ? decls[0] : undefined;
@@ -317,25 +343,24 @@ export function parseWorkflowJs(source: string, slug = 'imported'): WorkflowGrap
       if (d && d.id.type === 'Identifier' && init?.type === 'AwaitExpression' && (stmt.kind as string) === 'const') {
         const call = as<{ argument: Node }>(init).argument;
         const bind = as<{ name: string }>(d.id).name;
-        const typed = tryTypedCall(call, bind, source, locals, freshId);
-        if (typed) { flushRaw(); locals.add(bind); push(typed); continue; }
+        const typed = tryTypedCall(call, bind, source, refs, freshId);
+        if (typed) { refs.node.add(bind); push(typed); cursor = stmt.end; continue; }
       }
-      toRaw(stmt);
+      emitRaw(stmt); cursor = stmt.end;
       continue;
     }
 
     // return <expr>
     if (stmt.type === 'ReturnStatement') {
       const ret = tryReturn((stmt as { argument?: Node }).argument, source, freshId);
-      if (ret) { flushRaw(); push(ret); continue; }
-      toRaw(stmt);
+      if (ret) { push(ret); cursor = stmt.end; continue; }
+      emitRaw(stmt); cursor = stmt.end;
       continue;
     }
 
     // anything else (if/else, while, for, expression statements, functions) → raw
-    toRaw(stmt);
+    emitRaw(stmt); cursor = stmt.end;
   }
-  flushRaw();
 
   if (!sawMeta) return null;
 
@@ -361,7 +386,7 @@ function tryTypedCall(
   call: Node,
   bind: string,
   src: string,
-  locals: Set<string>,
+  refs: Refs,
   freshId: (b: string) => string,
 ): WorkflowNode | null {
   if (call.type !== 'CallExpression') return null;
@@ -370,47 +395,103 @@ function tryTypedCall(
   const args = call.arguments as Node[];
 
   if (name === 'agent') {
-    const prompt = templateToPrompt(args[0] as Node, src, locals);
+    const prompt = templateToPrompt(args[0] as Node, src, refs);
     if (prompt === null) return null;
-    const opts = parseAgentOpts(args[1] as Node | undefined, src, locals);
+    const opts = parseAgentOpts(args[1] as Node | undefined, src, refs);
     if (opts === null) return null;
-    const data: AgentData = { prompt, ...(opts.schema ? { schema: opts.schema } : {}), ...(opts.label !== undefined ? { label: opts.label } : {}), ...(opts.model ? { model: opts.model } : {}) };
+    const data: AgentData = {
+      prompt,
+      ...(opts.schema ? { schema: opts.schema } : {}),
+      ...(opts.label !== undefined ? { label: opts.label } : {}),
+      ...(opts.model ? { model: opts.model } : {}),
+      ...(opts.extraOpts ? { extraOpts: opts.extraOpts } : {}),
+    };
     return { id: freshId(bind), kind: 'agent', label: labelForBinding(bind), position: POS, data };
   }
 
   if (name === 'pipeline') {
     // pipeline(items, item => agent(...))
-    const itemsNode = args[0] as Node;
-    const fn = args[1] as Node;
-    if (!fn || (fn.type !== 'ArrowFunctionExpression' && fn.type !== 'FunctionExpression')) return null;
-    const params = as<{ params: Node[] }>(fn).params;
-    if (params.length !== 1 || params[0]!.type !== 'Identifier') return null;
-    const itemName = as<{ name: string }>(params[0]).name;
-    const fnBody = as<{ body: Node }>(fn).body;
-    const inner = fnBody.type === 'BlockStatement' ? null : fnBody; // only expression-body arrows
-    const innerCall = inner ? agentCall(inner) : null;
-    if (!innerCall) return null;
-    const src0 = pipelineSourceRef(itemsNode);
-    if (src0 === null) return null;
-    const itemLocals = new Set(locals); itemLocals.add(itemName === 'item' ? 'item' : itemName);
-    // Only support the emitter's `item` param name for {{item}} round-trip fidelity.
-    if (itemName !== 'item') return null;
-    const itemPrompt = templateToPrompt((innerCall.arguments as Node[])[0] as Node, src, itemLocals);
-    if (itemPrompt === null) return null;
-    const opts = parseAgentOpts((innerCall.arguments as Node[])[1] as Node | undefined, src, itemLocals);
-    if (opts === null) return null;
+    const p = parseMappedAgent(args[0] as Node, args[1] as Node | undefined, src, refs, /*thunk*/ false);
+    if (!p || p.itemVar !== 'item') return null; // pipeline uses the emitter's `item` param
     const data: PipelineData = {
-      source: src0.source,
-      ...(src0.sourceField ? { sourceField: src0.sourceField } : {}),
-      itemPrompt,
-      ...(opts.label !== undefined ? { itemLabel: opts.label } : {}),
-      ...(opts.schema ? { itemSchema: opts.schema } : {}),
-      ...(opts.model ? { model: opts.model } : {}),
+      source: p.source,
+      ...(p.sourceField ? { sourceField: p.sourceField } : {}),
+      itemPrompt: p.itemPrompt,
+      ...(p.opts.label !== undefined ? { itemLabel: p.opts.label } : {}),
+      ...(p.opts.schema ? { itemSchema: p.opts.schema } : {}),
+      ...(p.opts.model ? { model: p.opts.model } : {}),
+      ...(p.opts.extraOpts ? { extraOpts: p.opts.extraOpts } : {}),
     };
     return { id: freshId(bind), kind: 'pipeline', label: labelForBinding(bind), position: POS, data };
   }
 
+  if (name === 'parallel') {
+    // parallel(SOURCE.map(<v> => () => agent(prompt, opts)))
+    if (args.length !== 1) return null;
+    const mapCall = args[0] as Node;
+    if (mapCall.type !== 'CallExpression') return null;
+    const mapCallee = mapCall.callee as Node;
+    if (mapCallee.type !== 'MemberExpression' || (mapCallee.computed as boolean)) return null;
+    if (as<{ name: string }>(as<{ property: Node }>(mapCallee).property).name !== 'map') return null;
+    const sourceNode = as<{ object: Node }>(mapCallee).object;
+    const src0 = pipelineSourceRef(sourceNode);
+    if (src0 === null) return null;
+    // The .map callback: `<v> => () => agent(...)` (thunk-wrapped).
+    const p = parseMappedAgent(sourceNode, (mapCall.arguments as Node[])[0] as Node | undefined, src, refs, /*thunk*/ true);
+    if (!p) return null;
+    const data: ParallelData = {
+      source: p.source,
+      ...(p.sourceField ? { sourceField: p.sourceField } : {}),
+      itemVar: p.itemVar,
+      itemPrompt: p.itemPrompt,
+      ...(p.opts.label !== undefined ? { itemLabel: p.opts.label } : {}),
+      ...(p.opts.schema ? { itemSchema: p.opts.schema } : {}),
+      ...(p.opts.model ? { model: p.opts.model } : {}),
+      ...(p.opts.extraOpts ? { extraOpts: p.opts.extraOpts } : {}),
+    };
+    return { id: freshId(bind), kind: 'parallel', label: labelForBinding(bind), position: POS, data };
+  }
+
   return null;
+}
+
+/**
+ * Shared shape for pipeline/parallel: `<source>` + a `<v> => [() =>] agent(prompt, opts)`
+ * callback. `sourceForItems` is the array being mapped/iterated; `fn` is the callback.
+ * `thunk` true means the arrow returns a thunk (`() => agent(...)`, the parallel form).
+ */
+function parseMappedAgent(
+  sourceForItems: Node,
+  fn: Node | undefined,
+  src: string,
+  refs: Refs,
+  thunk: boolean,
+): { source: string; sourceField?: string; itemVar: string; itemPrompt: string; opts: ParsedOpts } | null {
+  if (!fn || (fn.type !== 'ArrowFunctionExpression' && fn.type !== 'FunctionExpression')) return null;
+  const params = as<{ params: Node[] }>(fn).params;
+  if (params.length !== 1 || params[0]!.type !== 'Identifier') return null;
+  const itemVar = as<{ name: string }>(params[0]).name;
+  let body = as<{ body: Node }>(fn).body;
+  if (body.type === 'BlockStatement') return null; // only expression-body arrows
+  if (thunk) {
+    // body must itself be `() => agent(...)` (a zero-arg arrow returning the call).
+    if (body.type !== 'ArrowFunctionExpression') return null;
+    if ((as<{ params: Node[] }>(body).params).length !== 0) return null;
+    const inner = as<{ body: Node }>(body).body;
+    if (inner.type === 'BlockStatement') return null;
+    body = inner;
+  }
+  const innerCall = agentCall(body);
+  if (!innerCall) return null;
+  const src0 = pipelineSourceRef(sourceForItems);
+  if (src0 === null) return null;
+  // The map param is a per-item BARE local (emitter writes `${itemVar}`).
+  const itemRefs: Refs = { bare: new Set(refs.bare).add(itemVar), node: refs.node };
+  const itemPrompt = templateToPrompt((innerCall.arguments as Node[])[0] as Node, src, itemRefs);
+  if (itemPrompt === null) return null;
+  const opts = parseAgentOpts((innerCall.arguments as Node[])[1] as Node | undefined, src, itemRefs);
+  if (opts === null) return null;
+  return { source: src0.source, sourceField: src0.sourceField, itemVar, itemPrompt, opts };
 }
 
 /** pipeline items expr → {source, sourceField?}: `args`, `bind`, `bind.field`, `args.field`. */

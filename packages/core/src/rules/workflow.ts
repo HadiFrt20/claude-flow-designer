@@ -57,6 +57,7 @@ function refsIn(text: string): { raw: string; id: string; field?: string }[] {
 function structuredRefsOf(node: WorkflowNode): { field: string; id: string }[] {
   switch (node.kind) {
     case 'pipeline': return [{ field: 'source', id: node.data.source }];
+    case 'parallel': return [{ field: 'source', id: node.data.source }];
     case 'branch': return [{ field: 'source', id: node.data.source }];
     case 'output.return': return [{ field: 'source', id: node.data.source }];
     default: return [];
@@ -68,6 +69,7 @@ function promptsOf(node: WorkflowNode): { field: string; text: string }[] {
   switch (node.kind) {
     case 'agent': return [{ field: 'prompt', text: node.data.prompt }];
     case 'pipeline': return [{ field: 'itemPrompt', text: node.data.itemPrompt }];
+    case 'parallel': return [{ field: 'itemPrompt', text: node.data.itemPrompt }];
     case 'loopUntilCheck':
       return [
         { field: 'checkPrompt', text: node.data.checkPrompt },
@@ -164,12 +166,15 @@ const cf605: Rule = {
       }
     }
     const diags: Diagnostic[] = [];
-    const locals: Record<string, Set<string>> = {
+    const staticLocals: Record<string, Set<string>> = {
       pipeline: new Set(['item']),
       loopUntilCheck: new Set(['check']),
     };
     for (const n of graph.nodes) {
-      const allowedLocal = locals[n.kind] ?? new Set<string>();
+      // parallel's per-item local is its own itemVar (d/c/t/…), not a fixed name.
+      const allowedLocal = n.kind === 'parallel'
+        ? new Set([n.data.itemVar])
+        : (staticLocals[n.kind] ?? new Set<string>());
       for (const { field, text } of promptsOf(n)) {
         for (const ref of refsIn(text)) {
           // The field part is interpolated raw into JS — it must be a dotted-
@@ -255,11 +260,14 @@ const cf607: Rule = {
   run(graph) {
     const byId = new Map(graph.nodes.map((n) => [n.id, n]));
     const diags: Diagnostic[] = [];
-    for (const p of nodesOfKind(graph, 'pipeline')) {
+    // pipeline and parallel both fan out over a list source with the same semantics.
+    const fanOut = [...nodesOfKind(graph, 'pipeline'), ...nodesOfKind(graph, 'parallel')];
+    for (const p of fanOut) {
       const d = p.data;
       if (d.source === 'args') continue; // args used as the array — allowed
       const src = byId.get(d.source);
-      if (!src) continue; // CF605 covers unknown refs
+      // A raw-declared binding (not a node id) has no schema to check — skip.
+      if (!src) continue; // CF605 covers genuinely-unknown refs
       if (!d.sourceField) {
         // Offer to point sourceField at the first array field of the source schema.
         const arrayField = src.kind === 'agent' && src.data.schema
@@ -268,10 +276,10 @@ const cf607: Rule = {
           : undefined;
         diags.push({
           ruleId: 'CF607', severity: 'error', nodeId: p.id, field: 'sourceField',
-          message: 'pipeline.source is an object result but no sourceField selects a list.',
+          message: `${p.kind}.source is an object result but no sourceField selects a list.`,
           docsUrl: DOCS_URLS.workflows,
           ...(arrayField
-            ? { quickFix: { title: `Point sourceField at "${arrayField}"`, apply: (g) => patchNodeData(g, p.id, 'pipeline', (dd) => { dd.sourceField = arrayField; }) } }
+            ? { quickFix: { title: `Point sourceField at "${arrayField}"`, apply: (g) => patchNodeData(g, p.id, p.kind, (dd) => { (dd as { sourceField?: string }).sourceField = arrayField; }) } }
             : {}),
         });
         continue;
@@ -281,7 +289,7 @@ const cf607: Rule = {
         const props = (src.data.schema as { properties?: Record<string, { type?: string }> }).properties;
         const fieldType = props?.[d.sourceField.split('.')[0]!]?.type;
         if (fieldType && fieldType !== 'array') {
-          diags.push({ ruleId: 'CF607', severity: 'error', nodeId: p.id, field: 'sourceField', message: `pipeline.sourceField "${d.sourceField}" has schema type "${fieldType}", not array.`, docsUrl: DOCS_URLS.workflows });
+          diags.push({ ruleId: 'CF607', severity: 'error', nodeId: p.id, field: 'sourceField', message: `${p.kind}.sourceField "${d.sourceField}" has schema type "${fieldType}", not array.`, docsUrl: DOCS_URLS.workflows });
         }
       }
     }
@@ -414,6 +422,7 @@ const cf613: Rule = {
     };
     for (const n of nodesOfKind(graph, 'agent')) check(n.id, n.data.model, 'model');
     for (const n of nodesOfKind(graph, 'pipeline')) check(n.id, n.data.model, 'model');
+    for (const n of nodesOfKind(graph, 'parallel')) check(n.id, n.data.model, 'model');
     for (const n of nodesOfKind(graph, 'loopUntilCheck')) {
       check(n.id, n.data.checkModel, 'checkModel');
       check(n.id, n.data.fixModel, 'fixModel');
@@ -432,19 +441,27 @@ const cf614: Rule = {
   id: 'CF614',
   severity: 'warn',
   run(graph) {
-    return nodesOfKind(graph, 'pipeline')
-      .filter((n) => !n.data.itemLabel)
-      .map(
-        (n): Diagnostic => ({
-          ruleId: 'CF614',
-          severity: 'warn',
-          nodeId: n.id,
-          field: 'itemLabel',
-          message: 'pipeline has no itemLabel (the runtime fan-out is harder to read).',
-          docsUrl: DOCS_URLS.workflows,
-          quickFix: { title: 'Add {{item}} label', apply: (g) => patchNodeData(g, n.id, 'pipeline', (d) => { d.itemLabel = '{{item}}'; }) },
-        }),
-      );
+    const diags: Diagnostic[] = [];
+    for (const n of nodesOfKind(graph, 'pipeline')) {
+      if (n.data.itemLabel) continue;
+      diags.push({
+        ruleId: 'CF614', severity: 'warn', nodeId: n.id, field: 'itemLabel',
+        message: 'pipeline has no itemLabel (the runtime fan-out is harder to read).',
+        docsUrl: DOCS_URLS.workflows,
+        quickFix: { title: 'Add {{item}} label', apply: (g) => patchNodeData(g, n.id, 'pipeline', (d) => { d.itemLabel = '{{item}}'; }) },
+      });
+    }
+    for (const n of nodesOfKind(graph, 'parallel')) {
+      if (n.data.itemLabel) continue;
+      const v = n.data.itemVar;
+      diags.push({
+        ruleId: 'CF614', severity: 'warn', nodeId: n.id, field: 'itemLabel',
+        message: 'parallel has no itemLabel (the runtime fan-out is harder to read).',
+        docsUrl: DOCS_URLS.workflows,
+        quickFix: { title: `Add {{${v}}} label`, apply: (g) => patchNodeData(g, n.id, 'parallel', (d) => { d.itemLabel = `{{${v}}}`; }) },
+      });
+    }
+    return diags;
   },
 };
 

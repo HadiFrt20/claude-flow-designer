@@ -39,12 +39,22 @@ export const workflowMetaDataSchema = z.object({
   argsHint: z.string().optional(), // doc/comment: what `args` is at invocation
 });
 
+/**
+ * Undocumented-but-real agent opts the corpus uses (phase/effort/agentType/…),
+ * preserved verbatim as raw JS value expressions keyed by opt name so a real
+ * `agent(prompt, { label, phase, effort })` call types instead of falling to raw.
+ * Emitted after the modeled opts (schema/label/model). Values are JS source, e.g.
+ * `{ phase: "'Design'", effort: "'high'" }`.
+ */
+const extraOptsSchema = z.record(z.string(), z.string());
+
 /** One `agent(prompt, opts)` call → one `const` binding. */
 export const agentDataSchema = z.object({
   prompt: z.string(), // template: may contain {{nodeId}} / {{nodeId.field}} / {{args}}
   schema: jsonSchemaShape.optional(), // → opts.schema (structured output)
   label: z.string().optional(), // → opts.label
   model: z.string().optional(), // → opts.model (per-stage routing)
+  extraOpts: extraOptsSchema.optional(), // → passthrough opts (phase/effort/agentType/…)
 });
 
 /** Fan-out: `pipeline(items, item => agent(...))`. */
@@ -55,6 +65,24 @@ export const pipelineDataSchema = z.object({
   itemLabel: z.string().optional(), // per-item opts.label; may contain {{item}}
   itemSchema: jsonSchemaShape.optional(),
   model: z.string().optional(),
+  extraOpts: extraOptsSchema.optional(),
+});
+
+/**
+ * Concurrent fan-out — the corpus's dominant primitive (118 uses):
+ *   `const x = await parallel(SOURCE.map(<itemVar> => () => agent(prompt, opts)))`
+ * Like pipeline but wraps each call in a thunk and preserves the map param name
+ * (`d`, `c`, `t`, … — not always `item`) so it round-trips exactly.
+ */
+export const parallelDataSchema = z.object({
+  source: resultRefSchema, // the mapped array: a node id, 'args', or a raw-declared binding
+  sourceField: fieldPathSchema.optional(),
+  itemVar: z.string().default('item'), // the .map param name (verbatim)
+  itemPrompt: z.string(), // per-item prompt; may contain {{<itemVar>}} + upstream refs
+  itemLabel: z.string().optional(),
+  itemSchema: jsonSchemaShape.optional(),
+  model: z.string().optional(),
+  extraOpts: extraOptsSchema.optional(),
 });
 
 /** Conditional on an agent result; two labeled outgoing edges (`then`/`else`). */
@@ -107,6 +135,7 @@ export const workflowNodeSchema = z.discriminatedUnion('kind', [
   node('workflow.meta', workflowMetaDataSchema),
   node('agent', agentDataSchema),
   node('pipeline', pipelineDataSchema),
+  node('parallel', parallelDataSchema),
   node('branch', branchDataSchema),
   node('loopUntilCheck', loopUntilCheckDataSchema),
   node('output.return', returnDataSchema),
@@ -118,13 +147,14 @@ export type NodeKind = WorkflowNode['kind'];
 
 /** All node kinds, for exhaustiveness checks and edge-compatibility tables. */
 export const NODE_KINDS = [
-  'workflow.meta', 'agent', 'pipeline', 'branch', 'loopUntilCheck', 'output.return', 'raw',
+  'workflow.meta', 'agent', 'pipeline', 'parallel', 'branch', 'loopUntilCheck', 'output.return', 'raw',
 ] as const satisfies readonly NodeKind[];
 
 // Narrowed data types (handy for rule + codegen code).
 export type WorkflowMetaData = z.infer<typeof workflowMetaDataSchema>;
 export type AgentData = z.infer<typeof agentDataSchema>;
 export type PipelineData = z.infer<typeof pipelineDataSchema>;
+export type ParallelData = z.infer<typeof parallelDataSchema>;
 export type BranchData = z.infer<typeof branchDataSchema>;
 export type LoopUntilCheckData = z.infer<typeof loopUntilCheckDataSchema>;
 export type ReturnData = z.infer<typeof returnDataSchema>;

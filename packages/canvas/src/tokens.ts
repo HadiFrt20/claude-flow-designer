@@ -10,7 +10,7 @@ export type NodeCategory = 'meta' | 'agent' | 'pipeline' | 'control' | 'raw';
 export function categoryOf(kind: NodeKind): NodeCategory {
   if (kind === 'workflow.meta') return 'meta';
   if (kind === 'agent') return 'agent';
-  if (kind === 'pipeline') return 'pipeline';
+  if (kind === 'pipeline' || kind === 'parallel') return 'pipeline'; // both fan out
   if (kind === 'raw') return 'raw';
   // branch, loopUntilCheck, output.return — control flow / terminals.
   return 'control';

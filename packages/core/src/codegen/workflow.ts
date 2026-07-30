@@ -3,7 +3,7 @@
 import type { GeneratedFile } from '../schema/types.js';
 import type { WorkflowGraph } from '../schema/graph.js';
 import type {
-  WorkflowNode, AgentData, PipelineData, LoopUntilCheckData, ReturnData, BranchData, RawData,
+  WorkflowNode, NodeKind, AgentData, PipelineData, ParallelData, LoopUntilCheckData, ReturnData, BranchData, RawData,
 } from '../schema/nodes.js';
 import { FIELD_PATH_RE } from '../schema/nodes.js';
 import { stableJson } from './json.js';
@@ -17,6 +17,11 @@ function escapeTemplate(s: string): string {
   return s.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$\{/g, '\\${');
 }
 
+// Raw-declared binding names visible in the graph, set for one buildWorkflow call
+// (synchronous, non-reentrant). A {{ref}} to one emits the bare `${name}` the author
+// wrote, rather than being left an unresolved literal.
+let rawBindings: ReadonlySet<string> = new Set();
+
 /** Resolve a single {{ref}} to the JS expression body of a `${…}` interpolation. */
 function resolveRef(
   ref: string,
@@ -26,15 +31,14 @@ function resolveRef(
   if (ref === 'args') return 'JSON.stringify(args)';
   if (ref in locals) return locals[ref]!;
   const [id, ...fieldParts] = ref.split('.');
+  const field = fieldParts.join('.');
+  if (field && !FIELD_PATH_RE.test(field)) return null; // dotted-identifier only (no injection)
+  // A ref to a raw-declared binding: emit the bare `${name}[.field]` verbatim — the
+  // author wrote it that way and the upstream raw block declares it (CF605 checks).
+  if (rawBindings.has(id!)) return field ? `${id}.${field}` : id!;
   const bind = names.get(id!);
   if (!bind) return null; // unresolved — CF605 blocks before emit; leave the literal visible
-  if (fieldParts.length === 0) return `JSON.stringify(${bind})`;
-  // The field path is interpolated raw into JS, so it MUST be a dotted-identifier
-  // chain — never arbitrary text. A non-conforming path (e.g. `x || evil()`) is
-  // refused here and reported by CF605; leaving it a literal avoids code injection.
-  const field = fieldParts.join('.');
-  if (!FIELD_PATH_RE.test(field)) return null;
-  return `${bind}.${field}`;
+  return field ? `${bind}.${field}` : `JSON.stringify(${bind})`;
 }
 
 /**
@@ -72,7 +76,7 @@ function renderPrompt(
  * also valid for a plain label with no interpolation).
  */
 function agentOpts(
-  parts: { schema?: Record<string, unknown>; label?: string; model?: string },
+  parts: { schema?: Record<string, unknown>; label?: string; model?: string; extraOpts?: Record<string, string> },
   names: Map<string, string>,
   locals: Record<string, string> = {},
 ): string {
@@ -80,6 +84,8 @@ function agentOpts(
   if (parts.schema) entries.push(`schema: ${inlineJson(parts.schema)}`);
   if (parts.label !== undefined) entries.push(`label: \`${renderPrompt(parts.label, names, locals)}\``);
   if (parts.model) entries.push(`model: ${JSON.stringify(parts.model)}`);
+  // Passthrough opts (phase/effort/agentType/…): value is verbatim JS source.
+  if (parts.extraOpts) for (const [k, v] of Object.entries(parts.extraOpts)) entries.push(`${k}: ${v}`);
   return entries.length ? `{ ${entries.join(', ')} }` : '';
 }
 
@@ -106,6 +112,8 @@ export function emitWorkflow(graph: WorkflowGraph): GeneratedFile {
  */
 export function buildWorkflow(graph: WorkflowGraph): { file: GeneratedFile; rawRegions: { start: number; end: number }[] } {
   const names = bindingNames(graph);
+  // Names declared by raw nodes — a typed prompt's {{ref}} to one emits `${name}`.
+  rawBindings = new Set(graph.nodes.flatMap((n) => (n.kind === 'raw' ? (n.data.produces ?? []) : [])));
   const byId = nodeById(graph);
   const meta = graph.nodes.find((n) => n.kind === 'workflow.meta');
   const metaName = meta?.kind === 'workflow.meta' ? meta.data.name : graph.meta.slug;
@@ -158,12 +166,17 @@ function emitSequence(
     if (arms) for (const m of [...arms.then, ...arms.else]) nested.add(m);
   }
   const out: Line[] = [];
+  let prevKind: NodeKind | null = null;
   for (const id of ids) {
     if (nested.has(id)) continue; // emitted inside its enclosing branch arm
     const node = byId.get(id);
     if (!node || node.kind === 'workflow.meta') continue;
+    // One blank line BETWEEN nodes — but none between two consecutive `raw` nodes,
+    // which were contiguous statements in the source (preserves original spacing).
+    if (prevKind !== null && !(prevKind === 'raw' && node.kind === 'raw')) out.push(plain(''));
     if (node.kind === 'branch') out.push(...emitBranch(node, names, graph, armMembers, defaultModel));
     else out.push(...emitStatement(node, names, defaultModel));
+    prevKind = node.kind;
   }
   return out;
 }
@@ -218,50 +231,62 @@ function emitBranch(
       .map((l) => ({ text: '  ' + l.text, raw: l.raw }));
   const out: Line[] = [plain(`if (${cond}) {`), ...arm(arms.then)];
   if (arms.else.length) out.push(plain('} else {'), ...arm(arms.else));
-  out.push(plain('}'), plain(''));
+  out.push(plain('}')); // inter-node blank is added by emitSequence
   return out;
 }
 
+/**
+ * A node's content lines (NO trailing blank — emitSequence handles inter-node
+ * spacing). A `raw` node's lines are each tagged `raw` so self-lint exempts them.
+ */
 function emitStatement(node: WorkflowNode, names: Map<string, string>, defaultModel?: string): Line[] {
   switch (node.kind) {
     case 'agent': {
       const d = node.data as AgentData;
       const bind = names.get(node.id)!;
-      const opts = agentOpts({ schema: d.schema, label: d.label, model: d.model ?? defaultModel }, names);
+      const opts = agentOpts({ schema: d.schema, label: d.label, model: d.model ?? defaultModel, extraOpts: d.extraOpts }, names);
       const call = opts ? `agent(\`${renderPrompt(d.prompt, names)}\`, ${opts})` : `agent(\`${renderPrompt(d.prompt, names)}\`)`;
-      return [plain(`const ${bind} = await ${call}`), plain('')];
+      return [plain(`const ${bind} = await ${call}`)];
     }
     case 'pipeline': {
       const d = node.data as PipelineData;
       const bind = names.get(node.id)!;
-      const sourceExpr = pipelineSource(d, names);
-      const itemOpts = agentOpts({ schema: d.itemSchema, label: d.itemLabel, model: d.model ?? defaultModel }, names, { item: 'item' });
+      const sourceExpr = pipelineSource(d.source, d.sourceField, names);
+      const itemOpts = agentOpts({ schema: d.itemSchema, label: d.itemLabel, model: d.model ?? defaultModel, extraOpts: d.extraOpts }, names, { item: 'item' });
       const inner = itemOpts
         ? `agent(\`${renderPrompt(d.itemPrompt, names, { item: 'item' })}\`, ${itemOpts})`
         : `agent(\`${renderPrompt(d.itemPrompt, names, { item: 'item' })}\`)`;
-      return [plain(`const ${bind} = await pipeline(${sourceExpr}, item => ${inner})`), plain('')];
+      return [plain(`const ${bind} = await pipeline(${sourceExpr}, item => ${inner})`)];
+    }
+    case 'parallel': {
+      const d = node.data as ParallelData;
+      const bind = names.get(node.id)!;
+      const v = d.itemVar; // the .map param name, verbatim
+      const sourceExpr = pipelineSource(d.source, d.sourceField, names);
+      const itemOpts = agentOpts({ schema: d.itemSchema, label: d.itemLabel, model: d.model ?? defaultModel, extraOpts: d.extraOpts }, names, { [v]: v });
+      const inner = itemOpts
+        ? `agent(\`${renderPrompt(d.itemPrompt, names, { [v]: v })}\`, ${itemOpts})`
+        : `agent(\`${renderPrompt(d.itemPrompt, names, { [v]: v })}\`)`;
+      // parallel(SOURCE.map(<v> => () => agent(...)))  — the corpus's dominant shape.
+      return [plain(`const ${bind} = await parallel(${sourceExpr}.map(${v} => () => ${inner}))`)];
     }
     case 'loopUntilCheck':
       return emitLoop(node.data as LoopUntilCheckData, names.get(node.id)!, names, defaultModel).map(plain);
     case 'output.return':
       return [plain(`return ${returnExpr(node.data as ReturnData, names)}`)];
     case 'raw':
-      // Emit the preserved source verbatim, one Line per source line (each tagged
-      // raw so self-lint exempts its identifiers); a blank line keeps spacing.
-      return [
-        ...(node.data as RawData).code.split('\n').map((text): Line => ({ text, raw: true })),
-        plain(''),
-      ];
+      return (node.data as RawData).code.split('\n').map((text): Line => ({ text, raw: true }));
     default:
       return [];
   }
 }
 
-function pipelineSource(d: PipelineData, names: Map<string, string>): string {
-  if (d.source === 'args') return d.sourceField ? `args.${d.sourceField}` : 'args';
-  const bind = names.get(d.source);
-  const base = bind ?? d.source;
-  return d.sourceField ? `${base}.${d.sourceField}` : base;
+/** The source-array expression for a pipeline/parallel: `args`, a node binding, or
+ *  a raw-declared binding name — with an optional `.field` selector. */
+function pipelineSource(source: string, sourceField: string | undefined, names: Map<string, string>): string {
+  if (source === 'args') return sourceField ? `args.${sourceField}` : 'args';
+  const base = names.get(source) ?? source;
+  return sourceField ? `${base}.${sourceField}` : base;
 }
 
 function returnExpr(d: ReturnData, names: Map<string, string>): string {
@@ -296,7 +321,6 @@ function emitLoop(d: LoopUntilCheckData, bind: string, names: Map<string, string
     `  await ${fixCall}`,
     '  round++',
     '}',
-    '',
   ];
 }
 

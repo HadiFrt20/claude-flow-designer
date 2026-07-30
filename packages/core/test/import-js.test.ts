@@ -38,6 +38,67 @@ describe('parseWorkflowJs — gallery round-trip (byte-identical)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// M8: first-class parallel() modeling + opts passthrough.
+// ---------------------------------------------------------------------------
+describe('parseWorkflowJs — parallel() (M8)', () => {
+  // Build the canonical script via a graph → generate(), then parse THAT back
+  // (the parser is the exact inverse of the emitter for its own output).
+  const parallelGraph = {
+    version: 1 as const,
+    meta: { name: 'rev', slug: 'rev' },
+    settings: {},
+    nodes: [
+      { id: 'meta', kind: 'workflow.meta' as const, label: 'rev', position: { x: 0, y: 0 }, data: { name: 'rev', description: 'd' } },
+      { id: 'list', kind: 'agent' as const, label: 'list', position: { x: 0, y: 0 }, data: { prompt: 'List.', schema: { type: 'object', properties: { items: { type: 'array' } } } } },
+      { id: 'reviews', kind: 'parallel' as const, label: 'reviews', position: { x: 0, y: 0 }, data: { source: 'list', sourceField: 'items', itemVar: 'd', itemPrompt: 'Review {{d}}.', itemLabel: 'rev {{d}}', extraOpts: { phase: "'Review'" } } },
+      { id: 'ret', kind: 'output.return' as const, label: 'ret', position: { x: 0, y: 0 }, data: { source: 'reviews', transform: 'none' as const } },
+    ],
+    edges: [
+      { id: 'e1', source: 'meta', target: 'list' },
+      { id: 'e2', source: 'list', target: 'reviews' },
+      { id: 'e3', source: 'reviews', target: 'ret' },
+    ],
+  };
+  const src = jsOf(generate(parallelGraph));
+
+  it('types a parallel(SOURCE.map(v => () => agent(...))) call', () => {
+    const g = parseWorkflowJs(src, 'rev')!;
+    const par = g.nodes.find((n) => n.kind === 'parallel');
+    expect(par, 'no parallel node').toBeDefined();
+    if (par!.kind !== 'parallel') throw new Error('kind');
+    expect(par!.data.source).toBe('list');
+    expect(par!.data.sourceField).toBe('items');
+    expect(par!.data.itemVar).toBe('d'); // preserves the .map param name
+    expect(par!.data.itemPrompt).toBe('Review {{d}}.');
+    expect(par!.data.itemLabel).toBe('rev {{d}}');
+    expect(par!.data.extraOpts).toEqual({ phase: "'Review'" }); // passthrough opt, verbatim
+  });
+
+  it('round-trips a parallel workflow byte-identical', () => {
+    expect(jsOf(generate(parseWorkflowJs(src, 'rev')!))).toBe(src);
+  });
+
+  it('preserves unmodeled agent opts (phase/effort) as passthrough instead of raw', () => {
+    const g0 = {
+      version: 1 as const, meta: { name: 'x', slug: 'x' }, settings: {},
+      nodes: [
+        { id: 'meta', kind: 'workflow.meta' as const, label: 'x', position: { x: 0, y: 0 }, data: { name: 'x', description: 'd' } },
+        { id: 'draft', kind: 'agent' as const, label: 'draft', position: { x: 0, y: 0 }, data: { prompt: 'Write it.', label: 'd', extraOpts: { phase: "'Synthesize'", effort: "'high'" } } },
+        { id: 'ret', kind: 'output.return' as const, label: 'ret', position: { x: 0, y: 0 }, data: { source: 'draft', transform: 'none' as const } },
+      ],
+      edges: [{ id: 'e1', source: 'meta', target: 'draft' }, { id: 'e2', source: 'draft', target: 'ret' }],
+    };
+    const s = jsOf(generate(g0));
+    const g = parseWorkflowJs(s, 'x')!;
+    const a = g.nodes.find((n) => n.kind === 'agent');
+    expect(a, 'agent fell back to raw').toBeDefined();
+    if (a!.kind !== 'agent') throw new Error('kind');
+    expect(a!.data.extraOpts).toEqual({ phase: "'Synthesize'", effort: "'high'" });
+    expect(jsOf(generate(g))).toBe(s); // byte-identical
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Real, complex, hand-authored workflow: not necessarily byte-identical, but
 // must parse to a valid graph that re-generates a self-lint-passing workflow.
 // ---------------------------------------------------------------------------
@@ -69,12 +130,18 @@ describe('parseWorkflowJs — real hand-authored workflow (ironclad)', () => {
     expect(js).toMatch(/return \{[\s\S]*ranking: ranked/); // the workflow's final object return
   });
 
-  it('carries the raw block’s declared bindings in produces', () => {
+  it('carries raw-declared bindings in produces (across the per-statement raw nodes)', () => {
     const g = parseWorkflowJs(src, 'ironclad')!;
-    const raw = g.nodes.find((n) => n.kind === 'raw')!;
-    if (raw.kind !== 'raw') throw new Error('kind');
-    expect(raw.data.produces).toContain('results');
-    expect(raw.data.produces).toContain('final');
+    const produced = g.nodes.flatMap((n) => (n.kind === 'raw' ? (n.data.produces ?? []) : []));
+    expect(produced).toContain('results');
+    expect(produced).toContain('final');
+  });
+
+  it('splits the body into MANY per-statement blocks, not one blob (M8)', () => {
+    const g = parseWorkflowJs(src, 'ironclad')!;
+    // The 219-line workflow becomes dozens of ordered nodes (was meta + 1 raw in M7).
+    expect(g.nodes.length).toBeGreaterThan(20);
+    expect(g.nodes[0]!.kind).toBe('workflow.meta');
   });
 });
 
@@ -118,9 +185,9 @@ describe('parseWorkflowJs — round-trip fidelity', () => {
       '',
     ].join('\n');
     const g = parseWorkflowJs(src, 'demo')!;
-    const raw = g.nodes.find((n) => n.kind === 'raw')!;
-    if (raw.kind !== 'raw') throw new Error('kind');
-    expect(raw.data.produces).toEqual(expect.arrayContaining(['topic', 'first', 'rest']));
+    // M8: one raw node per statement, so produces is spread across the raw nodes.
+    const produced = g.nodes.flatMap((n) => (n.kind === 'raw' ? (n.data.produces ?? []) : []));
+    expect(produced).toEqual(expect.arrayContaining(['topic', 'first', 'rest']));
   });
 
   it('M3: interstitial comments inside a raw group are preserved on re-export', () => {

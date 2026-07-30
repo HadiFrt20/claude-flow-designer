@@ -57,6 +57,15 @@ export const FIELD_DESCRIPTORS: Record<NodeKind, FieldDescriptor[]> = {
     { key: 'itemSchema', label: 'Per-item schema', type: 'json', group: 'Advanced', hint: 'JSON Schema for each item agent.' },
     MODEL,
   ],
+  parallel: [
+    { key: 'source', label: 'Items source', type: 'resultRef', group: 'Basic', hint: 'Producing node id, "args", or an array binding to fan out over concurrently.' },
+    { key: 'sourceField', label: 'List field', type: 'fieldPath', group: 'Basic', hint: 'Which array field of the source; omit if the source IS the array.' },
+    { key: 'itemVar', label: 'Item variable', type: 'text', group: 'Basic', placeholder: 'item', hint: 'The .map parameter name; use {{<it>}} in the prompt/label.' },
+    { key: 'itemPrompt', label: 'Per-item prompt', type: 'textarea', group: 'Basic', hint: 'Use {{<itemVar>}} for the current element; upstream refs allowed.' },
+    { key: 'itemLabel', label: 'Per-item label', type: 'text', group: 'Advanced', hint: 'opts.label per concurrent agent.' },
+    { key: 'itemSchema', label: 'Per-item schema', type: 'json', group: 'Advanced' },
+    MODEL,
+  ],
   branch: [
     { key: 'source', label: 'Test result of', type: 'resultRef', group: 'Basic', hint: 'Node id whose result is tested.' },
     { key: 'field', label: 'Boolean field', type: 'fieldPath', group: 'Basic', hint: 'Boolean-ish field on that result.' },
@@ -99,6 +108,7 @@ export const PALETTE: { group: string; entries: PaletteEntry[] }[] = [
     entries: [
       { kind: 'agent', label: 'Agent' },
       { kind: 'pipeline', label: 'Pipeline (fan-out)' },
+      { kind: 'parallel', label: 'Parallel (concurrent)' },
     ],
   },
   {
@@ -121,6 +131,8 @@ export function defaultData(kind: NodeKind): Record<string, unknown> {
       return { prompt: '' };
     case 'pipeline':
       return { source: 'args', itemPrompt: '' };
+    case 'parallel':
+      return { source: 'args', itemVar: 'item', itemPrompt: '' };
     case 'branch':
       return { source: '', field: 'ok' };
     case 'loopUntilCheck':

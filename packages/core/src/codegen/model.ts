@@ -7,7 +7,7 @@ import { nodeById, topoOrder } from '../schema/graph-utils.js';
 
 /** Kinds that produce a `const` binding (referenceable downstream). */
 const BINDING_KINDS: ReadonlySet<NodeKind> = new Set([
-  'agent', 'pipeline', 'loopUntilCheck',
+  'agent', 'pipeline', 'parallel', 'loopUntilCheck',
 ]);
 
 export function producesBinding(node: WorkflowNode): boolean {
