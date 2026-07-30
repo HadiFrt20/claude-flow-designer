@@ -9,5 +9,5 @@ M4 | done | VS Code extension: custom editor (canvas webview, strict CSP), postM
 M5 | pending |
 M6 | done | PIVOT: designer now targets Claude Code dynamic-workflow scripts (.claude/workflows/*.js) — 6-kind schema, workflow.ts emitter, acorn self-lint (scope-aware), CF6xx rules, sidecar round-trip, canvas + web + vscode retargeted; 288 tests, code-reviewer APPROVE; supersedes the M0–M4 asset model
 M7 | done | JS→graph importer: parseWorkflowJs parses real .claude/workflows/*.js onto the canvas (typed nodes + verbatim `raw` nodes); sidecar is now derived. 5 gallery scripts round-trip byte-identical, ironclad re-generates valid; 328 tests; code-reviewer APPROVE after 4 rounds (B1 prompt-ref, B2 CF606 parity, B3/B4 raw self-lint exemption)
-M8 | in-progress | Full workflow modeling: per-statement blocks + first-class parallel() node + agent opts passthrough (phase/effort/agentType); ground truth = 73-workflow corpus
+M8 | done | Visualization-first full workflow modeling: per-statement blocks + first-class parallel() node + opts passthrough + verbatim promptExpr (function-call prompts type as agent nodes); corpus typed coverage 5→88, 0 hard errors across 73 real workflows; 356 tests; code-reviewer APPROVE after 3 rounds (B1–B10 all fixed)
 <!-- statuses: pending | in-progress | done -->

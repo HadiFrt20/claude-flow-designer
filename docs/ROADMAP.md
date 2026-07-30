@@ -62,6 +62,21 @@
       real workflow) re-generates valid + self-lint-passing.
 - [x] code-reviewer APPROVE after 4 rounds (B1–B4, M1–M3, m1); 328 tests; lint clean.
 
+## M8 — Visualization-first full workflow modeling
+- [x] One node per top-level statement (imported workflows show their real structure,
+      not one opaque blob).
+- [x] First-class `parallel` node (`parallel(SRC.map(v => () => agent(...)))`) — the
+      corpus's dominant primitive; preserves the `.map` param name; round-trips exactly.
+- [x] `extraOpts` passthrough (phase/effort/agentType/…) so real agent opts type
+      verbatim instead of forcing the call to raw.
+- [x] Verbatim `promptExpr`: a function-call/programmatic prompt (`researchPrompt(d)`)
+      types as an agent node instead of dropping to raw; self-lint-exempt span.
+- [x] Refs resolve against raw-declared consts + per-item locals + args, split by exact
+      emit shape so parse↔emit is a precise byte-identical inverse.
+- [x] Validation (CF604/605/607/613/614) + canvas fields/palette extended to parallel.
+- [x] Grounded in a 73-workflow corpus: typed coverage 5→88, 0 hard errors; code-reviewer
+      APPROVE after 3 rounds (B1–B10); 356 tests; lint clean; fixtures drift-clean.
+
 ## M5 — Sharing & polish
 - [ ] Plugin-bundle export target.
 - [ ] Effort×model advisor (warnings + docs links).
