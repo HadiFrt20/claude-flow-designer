@@ -120,10 +120,15 @@ function promptArg(
 
 // --- emitter ----------------------------------------------------------------
 
-// A single emitted line, tagged by whether it originates from a `raw` node's
-// verbatim code. self-lint uses the raw byte spans to exempt those identifiers.
-interface Line { text: string; raw: boolean }
+// A single emitted line. `raw` tags a whole line that came from a `raw` node's
+// verbatim code. `exempt` lists verbatim SUBSTRINGS within a typed line (a
+// `promptExpr` — opaque user JS) that self-lint must not resolve. Both feed the
+// exempt byte-spans self-lint uses.
+interface Line { text: string; raw: boolean; exempt?: string[] }
 const plain = (text: string): Line => ({ text, raw: false });
+/** A typed line whose verbatim `promptExpr` substring (if any) is self-lint-exempt. */
+const exemptLine = (text: string, promptExpr?: string): Line =>
+  promptExpr !== undefined ? { text, raw: false, exempt: [promptExpr] } : plain(text);
 
 export function emitWorkflow(graph: WorkflowGraph): GeneratedFile {
   return buildWorkflow(graph).file;
@@ -163,7 +168,16 @@ export function buildWorkflow(graph: WorkflowGraph): { file: GeneratedFile; rawR
   for (const line of lines) {
     const start = content.length;
     content += line.text;
-    if (line.raw && line.text.length > 0) rawRegions.push({ start, end: content.length });
+    if (line.raw && line.text.length > 0) {
+      rawRegions.push({ start, end: content.length });
+    } else if (line.exempt) {
+      // Exempt each verbatim promptExpr substring's byte-span within this line.
+      for (const frag of line.exempt) {
+        if (!frag) continue;
+        const at = line.text.indexOf(frag);
+        if (at >= 0) rawRegions.push({ start: start + at, end: start + at + frag.length });
+      }
+    }
     content += '\n';
   }
 
@@ -252,7 +266,7 @@ function emitBranch(
   const arm = (ids: string[]): Line[] =>
     emitSequence(ids, names, graph, armMembers, defaultModel)
       .filter((l) => l.text !== '') // no blank lines inside the block
-      .map((l) => ({ text: '  ' + l.text, raw: l.raw }));
+      .map((l) => ({ text: '  ' + l.text, raw: l.raw, ...(l.exempt ? { exempt: l.exempt } : {}) }));
   const out: Line[] = [plain(`if (${cond}) {`), ...arm(arms.then)];
   if (arms.else.length) out.push(plain('} else {'), ...arm(arms.else));
   out.push(plain('}')); // inter-node blank is added by emitSequence
@@ -271,7 +285,7 @@ function emitStatement(node: WorkflowNode, names: Map<string, string>, defaultMo
       const opts = agentOpts({ schema: d.schema, label: d.label, model: d.model ?? defaultModel, extraOpts: d.extraOpts }, names);
       const arg = promptArg(d.promptExpr, d.prompt, names);
       const call = opts ? `agent(${arg}, ${opts})` : `agent(${arg})`;
-      return [plain(`const ${bind} = await ${call}`)];
+      return [exemptLine(`const ${bind} = await ${call}`, d.promptExpr)];
     }
     case 'pipeline': {
       const d = node.data as PipelineData;
@@ -280,7 +294,7 @@ function emitStatement(node: WorkflowNode, names: Map<string, string>, defaultMo
       const itemOpts = agentOpts({ schema: d.itemSchema, label: d.itemLabel, model: d.model ?? defaultModel, extraOpts: d.extraOpts }, names, { item: 'item' });
       const arg = promptArg(d.itemPromptExpr, d.itemPrompt, names, { item: 'item' });
       const inner = itemOpts ? `agent(${arg}, ${itemOpts})` : `agent(${arg})`;
-      return [plain(`const ${bind} = await pipeline(${sourceExpr}, item => ${inner})`)];
+      return [exemptLine(`const ${bind} = await pipeline(${sourceExpr}, item => ${inner})`, d.itemPromptExpr)];
     }
     case 'parallel': {
       const d = node.data as ParallelData;
@@ -291,7 +305,7 @@ function emitStatement(node: WorkflowNode, names: Map<string, string>, defaultMo
       const arg = promptArg(d.itemPromptExpr, d.itemPrompt, names, { [v]: v });
       const inner = itemOpts ? `agent(${arg}, ${itemOpts})` : `agent(${arg})`;
       // parallel(SOURCE.map(<v> => () => agent(...)))  — the corpus's dominant shape.
-      return [plain(`const ${bind} = await parallel(${sourceExpr}.map(${v} => () => ${inner}))`)];
+      return [exemptLine(`const ${bind} = await parallel(${sourceExpr}.map(${v} => () => ${inner}))`, d.itemPromptExpr)];
     }
     case 'loopUntilCheck':
       return emitLoop(node.data as LoopUntilCheckData, names.get(node.id)!, names, defaultModel).map(plain);

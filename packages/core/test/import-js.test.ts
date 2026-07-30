@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseWorkflowJs } from '../src/import-js.js';
 import { generate } from '../src/codegen/index.js';
+import { validateGraph } from '../src/validate.js';
 import { TEMPLATES } from '../src/templates.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -349,6 +350,32 @@ describe('parseWorkflowJs — M8 review regressions', () => {
     expect(src).toContain('${args.repo}');
     expect(src).not.toContain('{{args.repo}}');
     expect(re).toBe(src);
+  });
+
+  it('B7: a promptExpr using arbitrary JS builtins generates (self-lint exempt)', () => {
+    // parseInt/new Error are not in the GLOBALS allowlist; a promptExpr is opaque
+    // user JS, so its span is exempt — generate() must not throw a SelfLintError.
+    const src = 'export const meta = { name: "x", description: "d" }\nconst a = await agent(`Do ${parseInt(args.n)} via ${new Error("e")}.`)\nreturn a\n';
+    const g = parseWorkflowJs(src, 'x')!;
+    expect(g.nodes.some((n) => n.kind === 'agent')).toBe(true); // typed via promptExpr
+    expect(() => generate(g)).not.toThrow();
+    expect(jsOf(generate(g))).toContain('parseInt(args.n)');
+  });
+
+  it('B8: a sequence-expression prompt arg falls to raw (parens not lost)', () => {
+    const src = 'export const meta = { name: "x", description: "d" }\nconst a = await agent((foo, bar), { label: \'z\' })\nreturn a\n';
+    const g = parseWorkflowJs(src, 'x')!;
+    expect(g.nodes.some((n) => n.kind === 'agent')).toBe(false); // stayed raw
+  });
+
+  it('B9: an agent with neither prompt nor promptExpr is flagged (CF604) and blocked', () => {
+    const g0 = {
+      version: 1 as const, meta: { name: 'x', slug: 'x' }, settings: {},
+      nodes: [meta, { id: 'a', kind: 'agent', label: 'a', position: { x: 0, y: 0 }, data: { label: 'x' } }, ret('a')],
+      edges: [{ id: 'e1', source: 'm', target: 'a' }, { id: 'e2', source: 'a', target: 'ret' }],
+    } as never;
+    expect(validateGraph(g0).some((d) => d.ruleId === 'CF604')).toBe(true);
+    expect(() => generate(g0)).toThrow(); // export gate blocks the empty prompt
   });
 });
 

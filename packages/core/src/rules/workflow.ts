@@ -144,10 +144,20 @@ const cf604: Rule = {
   run(graph) {
     const diags: Diagnostic[] = [];
     for (const n of graph.nodes) {
+      // A template prompt that is present-but-empty.
       for (const { field, text } of promptsOf(n)) {
         if (!text.trim()) {
           diags.push({ ruleId: 'CF604', severity: 'error', nodeId: n.id, field, message: `${n.kind} ${field} is empty.`, docsUrl: DOCS_URLS.workflows });
         }
+      }
+      // A prompt-bearing kind with NEITHER a template prompt NOR a promptExpr → the
+      // emitted agent() would get an empty prompt. (promptExpr is non-empty by
+      // construction, so a node carrying it is fine.)
+      if (n.kind === 'agent' && n.data.prompt === undefined && n.data.promptExpr === undefined) {
+        diags.push({ ruleId: 'CF604', severity: 'error', nodeId: n.id, field: 'prompt', message: 'agent has no prompt.', docsUrl: DOCS_URLS.workflows });
+      }
+      if ((n.kind === 'pipeline' || n.kind === 'parallel') && n.data.itemPrompt === undefined && n.data.itemPromptExpr === undefined) {
+        diags.push({ ruleId: 'CF604', severity: 'error', nodeId: n.id, field: 'itemPrompt', message: `${n.kind} has no per-item prompt.`, docsUrl: DOCS_URLS.workflows });
       }
     }
     return diags;

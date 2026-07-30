@@ -44,6 +44,10 @@ function promptField(arg: Node | undefined, src: string, refs: Refs): { prompt: 
   if (!arg) return null;
   const tmpl = templateToPrompt(arg, src, refs);
   if (tmpl !== null) return { prompt: tmpl };
+  // A parenthesized SequenceExpression `(a, b)` has a node span that EXCLUDES the
+  // parens, so slicing it would turn one argument into several on re-emit (B8).
+  // Refuse — the whole call falls back to raw, preserving the source exactly.
+  if (arg.type === 'SequenceExpression') return null;
   return { promptExpr: src.slice(arg.start, arg.end) };
 }
 
