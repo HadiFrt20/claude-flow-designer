@@ -47,8 +47,11 @@ export function generate(graph: WorkflowGraph, opts: GenerateOptions = {}): Gene
   }
 
   // 4. self-lint (throws on any malformed artifact) + deterministic ordering.
+  // Raw-node code is opaque verbatim user JS — exempt its identifiers from the
+  // undefined-identifier check (it may use any JS global; B3).
+  const rawCode = graph.nodes.filter((n) => n.kind === 'raw').map((n) => n.data.code);
   const ordered = sortFiles(files);
-  selfLint(ordered);
+  selfLint(ordered, rawCode);
   return ordered;
 }
 

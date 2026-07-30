@@ -99,10 +99,15 @@ silently emits). Path-containment (`isSafePath`) is checked first for every file
   allowAwaitOutsideFunction:true`); `export const meta` present with a string `name`; exactly one
   top-level `return` and it is the last statement; every referenced identifier resolves against the
   bindings **visible in its lexical scope chain** (block/function scoped — a top-level ref to a
-  block-scoped binding does NOT resolve) ∪ the globals allowlist: the workflow runtime
-  (`agent, pipeline, args, meta, console`) plus the JS built-ins codegen can emit
-  (`JSON, Boolean, Number, String, Object, Array, Math, Promise, undefined, null, NaN, Infinity`);
-  trailing newline.
+  block-scoped binding does NOT resolve) ∪ the globals allowlist, kept TIGHT to what codegen's own
+  output emits: the workflow runtime (`agent, pipeline, args, meta, console`) plus the JS built-ins
+  codegen can emit (`JSON, Boolean, Number, String, Object, Array, Math, Promise, undefined, null,
+  NaN, Infinity`); trailing newline. **Exception (M7):** identifiers inside a `raw` node's verbatim
+  region are EXEMPT from resolution — raw code is opaque user JS emitted unchanged and may use any JS
+  global or runtime primitive (`Error`, `parseInt`, `phase`, `parallel`, …). `generate()` passes the
+  raw nodes' source to `selfLint` so it can locate and skip those spans; every other invariant
+  (single trailing return, meta, newline) stays global. This keeps the check strict where it catches
+  real codegen bugs (a typo'd binding in typed output) and lenient over opaque raw regions.
 
 ## Importer (round-trip)
 

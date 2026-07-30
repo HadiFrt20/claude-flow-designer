@@ -135,6 +135,24 @@ describe('parseWorkflowJs — round-trip fidelity', () => {
     const out = jsOf(generate(parseWorkflowJs(src, 'demo')!));
     expect(out).toContain('// IMPORTANT: keep this comment');
   });
+
+  it('B3: a raw block using arbitrary JS globals generates (no SelfLintError)', () => {
+    // throw new Error(...) / parseInt(...) are idiomatic in real workflows; the
+    // raw block is opaque, so its identifiers are exempt from self-lint resolution.
+    const src = [
+      "export const meta = { name: 'guard', description: 'd' }",
+      "if (!args.n) { throw new Error('missing n') }",
+      'const count = parseInt(args.n, 10)',
+      'const r = await agent(`Do ${count} things.`)',
+      'return r',
+      '',
+    ].join('\n');
+    const g = parseWorkflowJs(src, 'guard')!;
+    // Must NOT throw a SelfLintError — generate() succeeds.
+    const out = jsOf(generate(g));
+    expect(out).toContain('throw new Error');
+    expect(out).toContain('parseInt(args.n, 10)');
+  });
 });
 
 // ---------------------------------------------------------------------------

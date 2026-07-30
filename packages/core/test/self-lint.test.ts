@@ -153,4 +153,34 @@ describe('selfLint workflow script', () => {
     const bad = validScript.trimEnd();
     expect(() => selfLint([ok({ path: '.claude/workflows/x.js', content: bad })])).toThrow(/trailing newline/);
   });
+
+  it('exempts identifiers inside a raw region from resolution (B3)', () => {
+    // The raw snippet uses `Error`/`parseInt`, which are NOT in the allowlist —
+    // passing it as raw code exempts them; without the exemption this would throw.
+    const rawSnippet = "if (!args.n) { throw new Error('x') }\nconst count = parseInt(args.n, 10)";
+    const src = [
+      'export const meta = { name: "t", description: "d" }',
+      rawSnippet,
+      'const r = await agent(`hi`)',
+      'return r',
+      '',
+    ].join('\n');
+    // Exempt → passes.
+    expect(() => selfLint([ok({ path: '.claude/workflows/x.js', content: src })], [rawSnippet])).not.toThrow();
+    // NOT exempt (no rawCode passed) → the strict check catches the undefined global.
+    expect(() => selfLint([ok({ path: '.claude/workflows/x.js', content: src })])).toThrow(/undefined identifier/);
+  });
+
+  it('still catches an undefined identifier OUTSIDE any raw region', () => {
+    // A typo in codegen's own output must still fail even when a raw region exists.
+    const rawSnippet = 'const helper = 1';
+    const src = [
+      'export const meta = { name: "t", description: "d" }',
+      rawSnippet,
+      'const r = await agent(`use ${nope}`)', // nope is undefined and NOT in the raw region
+      'return r',
+      '',
+    ].join('\n');
+    expect(() => selfLint([ok({ path: '.claude/workflows/x.js', content: src })], [rawSnippet])).toThrow(/undefined identifier "nope"/);
+  });
 });

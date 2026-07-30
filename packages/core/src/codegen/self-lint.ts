@@ -24,15 +24,16 @@ function lintJson(file: GeneratedFile): void {
   if (!file.content.endsWith('\n')) throw new SelfLintError('missing trailing newline', file.path);
 }
 
-// Identifiers a workflow script may reference without declaring them: the
-// workflow-runtime globals plus the standard JS built-ins codegen can emit.
-// The runtime set is what Claude Code injects into a dynamic workflow's scope —
-// verified against real authored workflows (phase()/log() are used heavily).
+// Identifiers a workflow script may reference without declaring them, limited to
+// what CODEGEN'S OWN output emits — kept tight so the check still catches a real
+// codegen bug (a typo'd binding). Additional Claude Code runtime globals
+// (parallel/phase/log/…) and arbitrary JS built-ins only ever appear inside `raw`
+// nodes, whose identifiers are exempt from this check (opaque user code; B3).
 const GLOBALS = new Set([
-  // workflow runtime
-  'agent', 'pipeline', 'parallel', 'phase', 'log', 'args', 'meta', 'console',
-  // JS built-ins reachable from emitted or hand-authored workflow output
-  'JSON', 'Boolean', 'Number', 'String', 'Object', 'Array', 'Math', 'Promise', 'Date', 'RegExp', 'Set', 'Map',
+  // workflow runtime the emitter uses
+  'agent', 'pipeline', 'args', 'meta', 'console',
+  // JS built-ins the emitter can produce
+  'JSON', 'Boolean', 'Number', 'String', 'Object', 'Array', 'Math', 'Promise',
   'undefined', 'null', 'NaN', 'Infinity',
 ]);
 
@@ -42,7 +43,7 @@ const GLOBALS = new Set([
  * top-level return as the last statement, and every referenced identifier resolves
  * against declared bindings ∪ the globals allowlist.
  */
-function lintWorkflowScript(file: GeneratedFile): void {
+function lintWorkflowScript(file: GeneratedFile, rawCode: readonly string[] = []): void {
   const c = file.content;
   if (!c.endsWith('\n')) throw new SelfLintError('missing trailing newline', file.path);
 
@@ -57,6 +58,13 @@ function lintWorkflowScript(file: GeneratedFile): void {
   } catch (err) {
     throw new SelfLintError(`invalid JavaScript (${(err as Error).message})`, file.path);
   }
+
+  // Byte ranges of verbatim `raw`-node code in the emitted file. Raw blocks are
+  // opaque user JS emitted unchanged, so we do NOT enforce closed-world identifier
+  // resolution over them (a `throw new Error(…)` / `parseInt(…)` there is fine).
+  // The check stays strict for codegen's own typed output — where it catches real
+  // codegen bugs (B3). All OTHER invariants remain global.
+  const rawRegions = locateRegions(c, rawCode);
 
   const body = program.body;
   const declared = new Set<string>();
@@ -92,11 +100,36 @@ function lintWorkflowScript(file: GeneratedFile): void {
   // ∪ the globals allowlist. A flat "declared anywhere" set would false-pass a
   // top-level reference to a block-scoped binding (e.g. a branch arm's const), so
   // we model lexical scope — this is what actually catches a non-linearizable
-  // branch merge escaping into the emitted `.js`.
-  const unresolved = firstUnresolved(program, [GLOBALS]);
-  if (unresolved) {
-    throw new SelfLintError(`references undefined identifier "${unresolved}"`, file.path);
+  // branch merge escaping into the emitted `.js`. Identifiers inside a raw region
+  // are exempt (opaque user code); rawRegions is read by the Identifier leaf case.
+  exemptRegions = rawRegions;
+  try {
+    const unresolved = firstUnresolved(program, [GLOBALS]);
+    if (unresolved) {
+      throw new SelfLintError(`references undefined identifier "${unresolved}"`, file.path);
+    }
+  } finally {
+    exemptRegions = [];
   }
+}
+
+// Set for the duration of one lintWorkflowScript call (synchronous, non-reentrant):
+// byte ranges whose identifiers are exempt from resolution (verbatim raw code).
+let exemptRegions: readonly { start: number; end: number }[] = [];
+
+/** Byte [start,end) ranges where each raw snippet appears in the emitted content. */
+function locateRegions(content: string, snippets: readonly string[]): { start: number; end: number }[] {
+  const regions: { start: number; end: number }[] = [];
+  for (const snip of snippets) {
+    if (!snip) continue;
+    const at = content.indexOf(snip);
+    if (at >= 0) regions.push({ start: at, end: at + snip.length });
+  }
+  return regions;
+}
+
+function inRegions(pos: number, regions: readonly { start: number; end: number }[]): boolean {
+  return regions.some((r) => pos >= r.start && pos < r.end);
 }
 
 type Scope = Set<string>;
@@ -233,7 +266,10 @@ function firstUnresolved(node: acorn.Node, chain: Scope[]): string | null {
     }
     case 'Identifier': {
       const name = (node as unknown as { name: string }).name;
-      return resolves(name, chain) ? null : name;
+      if (resolves(name, chain)) return null;
+      // Exempt identifiers that live inside a verbatim raw region (opaque user code).
+      if (inRegions(node.start, exemptRegions)) return null;
+      return name;
     }
     default:
       return firstUnresolvedChildren(node, chain);
@@ -278,14 +314,19 @@ function isNode(v: unknown): v is acorn.Node {
   return typeof v === 'object' && v !== null && typeof (v as { type?: unknown }).type === 'string';
 }
 
-/** Lint every generated file by type. Throws SelfLintError on the first problem. */
-export function selfLint(files: GeneratedFile[]): void {
+/**
+ * Lint every generated file by type. Throws SelfLintError on the first problem.
+ * `rawCode` is the verbatim source of every `raw` node in the graph — identifiers
+ * inside those regions in the emitted `.js` are exempt from resolution (opaque
+ * user code we emit unchanged); every other invariant stays strict.
+ */
+export function selfLint(files: GeneratedFile[], rawCode: readonly string[] = []): void {
   for (const file of files) {
     // Containment first: no emitted path may escape the target directory.
     if (!isSafePath(file.path)) {
       throw new SelfLintError('unsafe path — escapes the target directory', file.path);
     }
     if (file.path.endsWith('.json')) lintJson(file);
-    else if (file.path.endsWith('.js')) lintWorkflowScript(file);
+    else if (file.path.endsWith('.js')) lintWorkflowScript(file, rawCode);
   }
 }
