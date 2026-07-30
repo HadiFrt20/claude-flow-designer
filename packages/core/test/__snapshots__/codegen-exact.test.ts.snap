@@ -21,6 +21,13 @@ exports[`codegen output is byte-exact against committed fixtures > grade-prs: em
 ]
 `;
 
+exports[`codegen output is byte-exact against committed fixtures > review-dims: emits exactly the committed file set 1`] = `
+[
+  ".claude/workflows/review-dims.js",
+  "review-dims.clauflow.json",
+]
+`;
+
 exports[`codegen output is byte-exact against committed fixtures > summarize: emits exactly the committed file set 1`] = `
 [
   ".claude/workflows/summarize.js",

@@ -21,6 +21,9 @@ function as<T>(node: unknown): T {
   return node as T;
 }
 
+/** A bare JS identifier (safe to emit unquoted as an object key). */
+const IDENT_RE = /^[A-Za-z_$][\w$]*$/;
+
 /** camelCase-ish → a readable label; falls back to the id. */
 function labelFor(binding: string | undefined, kind: string): string {
   if (!binding) return kind;
@@ -198,7 +201,10 @@ function parseAgentOpts(
     if (prop.type !== 'Property' || (prop.computed as boolean)) return null; // spread / computed key → raw
     const key = (prop.key as Node).type === 'Identifier' ? ((prop.key as Node).name as string)
       : (prop.key as Node).type === 'Literal' ? String((prop.key as Node).value) : null;
-    if (key === null) return null;
+    // The key is re-emitted UNQUOTED (`key: value`), so it must be a bare JS
+    // identifier. A quoted/kebab key (`'agent-type'`) can't round-trip that way —
+    // fall to raw rather than emit invalid JS or inject a sibling property (B1).
+    if (key === null || !IDENT_RE.test(key)) return null;
     const val = prop.value as Node;
     if (key === 'schema') {
       const parsed = jsonLiteral(val, src);
@@ -510,8 +516,11 @@ function parseMappedAgent(
   if (!innerCall) return null;
   const src0 = pipelineSourceRef(sourceForItems);
   if (src0 === null) return null;
-  // The map param is a per-item BARE local (emitter writes `${itemVar}`).
-  const itemRefs: Refs = { bare: new Set(refs.bare).add(itemVar), node: refs.node };
+  // The map param is a per-item BARE local (emitter writes `${itemVar}`). It SHADOWS
+  // any outer node binding of the same name, so drop it from `node` — otherwise a
+  // `${JSON.stringify(itemVar)}` would wrongly reconstruct and re-emit as bare (B2).
+  const itemNode = new Set(refs.node); itemNode.delete(itemVar);
+  const itemRefs: Refs = { bare: new Set(refs.bare).add(itemVar), node: itemNode };
   const prompt = promptField((innerCall.arguments as Node[])[0] as Node | undefined, src, itemRefs);
   if (prompt === null) return null;
   const opts = parseAgentOpts((innerCall.arguments as Node[])[1] as Node | undefined, src, itemRefs);

@@ -121,6 +121,31 @@ const gradePrs: WorkflowGraph = {
   ],
 };
 
+// --- review-dims: concurrent fan-out (parallel) + passthrough opts ----------
+const reviewDims: WorkflowGraph = {
+  version: 1,
+  meta: { name: 'Review Dims', slug: 'review-dims', description: 'Review each dimension concurrently, then merge' },
+  settings: {},
+  nodes: [
+    node({ id: 'meta', kind: 'workflow.meta', label: 'Review Dims', position: P, data: { name: 'review-dims', description: 'Review each dimension concurrently, then merge' } }),
+    node({
+      id: 'list', kind: 'agent', label: 'List dimensions', position: P,
+      data: { prompt: 'List the review dimensions.', schema: { type: 'object', required: ['dims'], properties: { dims: { type: 'array', items: { type: 'string' } } } } },
+    }),
+    node({
+      id: 'review', kind: 'parallel', label: 'Review each', position: P,
+      // itemVar 'd', a per-item field ref, a passthrough opt (phase), and a model — exercises the full parallel emit path.
+      data: { source: 'list', sourceField: 'dims', itemVar: 'd', itemPrompt: 'Review dimension {{d}} of {{list}}.', itemLabel: 'review:{{d}}', extraOpts: { phase: "'Review'" } },
+    }),
+    node({ id: 'ret', kind: 'output.return', label: 'return', position: P, data: { source: 'review', transform: 'filterBoolean' } }),
+  ],
+  edges: [
+    { id: 'e1', source: 'meta', target: 'list' },
+    { id: 'e2', source: 'list', target: 'review' },
+    { id: 'e3', source: 'review', target: 'ret' },
+  ],
+};
+
 export interface Template {
   slug: string;
   title: string;
@@ -133,4 +158,5 @@ export const TEMPLATES: Template[] = [
   { slug: 'test-fix', title: 'Test-Fix (loop)', graph: testFix },
   { slug: 'branch-review', title: 'Branch Review', graph: branchReview },
   { slug: 'grade-prs', title: 'Grade PRs (args pipeline)', graph: gradePrs },
+  { slug: 'review-dims', title: 'Review Dims (parallel)', graph: reviewDims },
 ];

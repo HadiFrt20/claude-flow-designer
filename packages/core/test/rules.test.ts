@@ -178,6 +178,59 @@ describe('CF607 array-field check', () => {
   });
 });
 
+describe('validation extends to the parallel kind (M8)', () => {
+  it('CF607 fires on a parallel over a non-array schema field', () => {
+    const graph = g(
+      [n.meta('meta', { name: 't', description: 'd' }),
+       n.agent('a', { prompt: 'Count.', schema: { type: 'object', properties: { count: { type: 'number' } } } }),
+       n.parallel('par', { source: 'a', sourceField: 'count', itemVar: 'd', itemPrompt: 'Do {{d}}.', itemLabel: '{{d}}' }),
+       n.ret('ret', { source: 'par', transform: 'none' })],
+      [e('meta', 'a'), e('a', 'par'), e('par', 'ret')],
+    );
+    expect(idsFor(graph)).toContain('CF607');
+  });
+
+  it('CF614 fires (with itemVar-aware quick fix) on a parallel with no itemLabel', () => {
+    const graph = g(
+      [n.meta('meta', { name: 't', description: 'd' }),
+       n.parallel('par', { source: 'args', itemVar: 'c', itemPrompt: 'Grade {{c}}.' }),
+       n.ret('ret', { source: 'par', transform: 'none' })],
+      [e('meta', 'par'), e('par', 'ret')],
+    );
+    const diag = validateGraph(graph).find((d) => d.ruleId === 'CF614' && d.nodeId === 'par');
+    expect(diag).toBeDefined();
+    expect(diag!.quickFix!.title).toBe('Add {{c}} label'); // uses the node's itemVar
+    expect(idsFor(diag!.quickFix!.apply(graph))).not.toContain('CF614');
+  });
+
+  it('CF605 treats the parallel itemVar as the allowed local and flags a wrong var', () => {
+    const bad = g(
+      [n.meta('meta', { name: 't', description: 'd' }),
+       n.parallel('par', { source: 'args', itemVar: 'c', itemPrompt: 'Grade {{item}}.', itemLabel: '{{c}}' }), // {{item}} ≠ itemVar 'c'
+       n.ret('ret', { source: 'par', transform: 'none' })],
+      [e('meta', 'par'), e('par', 'ret')],
+    );
+    expect(idsFor(bad)).toContain('CF605');
+    const ok = g(
+      [n.meta('meta', { name: 't', description: 'd' }),
+       n.parallel('par', { source: 'args', itemVar: 'c', itemPrompt: 'Grade {{c}}.', itemLabel: '{{c}}' }),
+       n.ret('ret', { source: 'par', transform: 'none' })],
+      [e('meta', 'par'), e('par', 'ret')],
+    );
+    expect(idsFor(ok)).not.toContain('CF605');
+  });
+
+  it('CF613 flags an unknown model on a parallel stage', () => {
+    const graph = g(
+      [n.meta('meta', { name: 't', description: 'd' }),
+       n.parallel('par', { source: 'args', itemVar: 'c', itemPrompt: 'Grade {{c}}.', itemLabel: '{{c}}', model: 'gpt-4' }),
+       n.ret('ret', { source: 'par', transform: 'none' })],
+      [e('meta', 'par'), e('par', 'ret')],
+    );
+    expect(idsFor(graph)).toContain('CF613');
+  });
+});
+
 describe('CF608 branch port cardinality', () => {
   it('does NOT fire for a branch with exactly one then and one else', () => {
     const graph = g(

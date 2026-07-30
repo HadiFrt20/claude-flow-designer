@@ -10,6 +10,7 @@ import type {
   WorkflowMetaData,
   AgentData,
   PipelineData,
+  ParallelData,
   BranchData,
   LoopUntilCheckData,
   ReturnData,
@@ -31,6 +32,9 @@ export const n = {
   }),
   pipeline: (id: string, data: PipelineData, label = id): WorkflowNode => ({
     id, kind: 'pipeline', label, position: pos, data,
+  }),
+  parallel: (id: string, data: ParallelData, label = id): WorkflowNode => ({
+    id, kind: 'parallel', label, position: pos, data,
   }),
   branch: (id: string, data: BranchData, label = id): WorkflowNode => ({
     id, kind: 'branch', label, position: pos, data,

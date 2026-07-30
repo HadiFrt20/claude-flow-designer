@@ -22,19 +22,28 @@ function escapeTemplate(s: string): string {
 // wrote, rather than being left an unresolved literal.
 let rawBindings: ReadonlySet<string> = new Set();
 
-/** Resolve a single {{ref}} to the JS expression body of a `${…}` interpolation. */
+/**
+ * Resolve a single {{ref}} to the JS expression body of a `${…}` interpolation.
+ * Precedence matches the parser's interpolationToRef so parse↔emit is a precise
+ * inverse: a per-call LOCAL (item/check) wins over a raw or node binding of the same
+ * name (B2). `locals` maps a local name → its whole-ref expression (`item`, or
+ * `JSON.stringify(check)`); a `.field` ref uses the bare local name + field.
+ */
 function resolveRef(
   ref: string,
   names: Map<string, string>,
   locals: Record<string, string>,
 ): string | null {
-  if (ref === 'args') return 'JSON.stringify(args)';
-  if (ref in locals) return locals[ref]!;
   const [id, ...fieldParts] = ref.split('.');
   const field = fieldParts.join('.');
   if (field && !FIELD_PATH_RE.test(field)) return null; // dotted-identifier only (no injection)
-  // A ref to a raw-declared binding: emit the bare `${name}[.field]` verbatim — the
-  // author wrote it that way and the upstream raw block declares it (CF605 checks).
+  // Per-call local (highest precedence): bare `${id}` / `${id.field}` for a field,
+  // else the local's whole-ref expression.
+  if (id! in locals) return field ? `${id}.${field}` : locals[id!]!;
+  // args: `${args.field}` for a field, `${JSON.stringify(args)}` whole.
+  if (id === 'args') return field ? `args.${field}` : 'JSON.stringify(args)';
+  // Raw-declared binding: bare `${name}[.field]` verbatim (author wrote it that way;
+  // the upstream raw block declares it — CF605 checks upstream-ness).
   if (rawBindings.has(id!)) return field ? `${id}.${field}` : id!;
   const bind = names.get(id!);
   if (!bind) return null; // unresolved — CF605 blocks before emit; leave the literal visible

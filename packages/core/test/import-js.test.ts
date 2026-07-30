@@ -297,6 +297,62 @@ describe('parseWorkflowJs — round-trip fidelity', () => {
 });
 
 // ---------------------------------------------------------------------------
+// M8 review — round-trip corruption + injection regressions.
+// ---------------------------------------------------------------------------
+describe('parseWorkflowJs — M8 review regressions', () => {
+  // Build the canonical script from a graph so comparisons are against real output.
+  const rt = (nodes: unknown[], edges: unknown[]) => {
+    const g0 = { version: 1 as const, meta: { name: 'x', slug: 'x' }, settings: {}, nodes, edges } as never;
+    const src = jsOf(generate(g0));
+    return { src, re: jsOf(generate(parseWorkflowJs(src, 'x')!)) };
+  };
+  const meta = { id: 'm', kind: 'workflow.meta', label: 'x', position: { x: 0, y: 0 }, data: { name: 'x', description: 'd' } };
+  const ret = (source: string) => ({ id: 'ret', kind: 'output.return', label: 'ret', position: { x: 0, y: 0 }, data: { source, transform: 'none' } });
+
+  it('B1: a kebab/quoted agent opt key falls to raw (never emits invalid JS)', () => {
+    const src = 'export const meta = { name: "x", description: "d" }\nconst a = await agent(`x`, { \'agent-type\': \'r\' })\nreturn a\n';
+    const g = parseWorkflowJs(src, 'x')!;
+    expect(g.nodes.some((n) => n.kind === 'agent')).toBe(false); // fell to raw
+    expect(() => generate(g)).not.toThrow(); // no SelfLintError from invalid JS
+  });
+
+  it('B2: parallel itemVar shadowing a node binding round-trips (JSON.stringify preserved)', () => {
+    const { src, re } = rt(
+      [meta,
+       { id: 'd', kind: 'agent', label: 'd', position: { x: 0, y: 0 }, data: { prompt: 'produce', schema: { type: 'object', properties: { items: { type: 'array' } } } } },
+       { id: 'p', kind: 'parallel', label: 'r', position: { x: 0, y: 0 }, data: { source: 'd', sourceField: 'items', itemVar: 'd', itemPrompt: 'Use {{d}}.', itemLabel: '{{d}}' } },
+       ret('p')],
+      [{ id: 'e1', source: 'm', target: 'd' }, { id: 'e2', source: 'd', target: 'p' }, { id: 'e3', source: 'p', target: 'ret' }],
+    );
+    expect(re).toBe(src);
+  });
+
+  it('B3: a per-item field ref (${item.field}) round-trips, not a literal', () => {
+    const { src, re } = rt(
+      [meta,
+       { id: 'p', kind: 'parallel', label: 'r', position: { x: 0, y: 0 }, data: { source: 'args', itemVar: 'item', itemPrompt: 'Review {{item.name}} now.', itemLabel: '{{item}}' } },
+       ret('p')],
+      [{ id: 'e1', source: 'm', target: 'p' }, { id: 'e2', source: 'p', target: 'ret' }],
+    );
+    expect(src).toContain('${item.name}');
+    expect(src).not.toContain('{{item.name}}');
+    expect(re).toBe(src);
+  });
+
+  it('M1: an ${args.field} ref round-trips, not a literal', () => {
+    const { src, re } = rt(
+      [meta,
+       { id: 'a', kind: 'agent', label: 'a', position: { x: 0, y: 0 }, data: { prompt: 'Target repo {{args.repo}}.' } },
+       ret('a')],
+      [{ id: 'e1', source: 'm', target: 'a' }, { id: 'e2', source: 'a', target: 'ret' }],
+    );
+    expect(src).toContain('${args.repo}');
+    expect(src).not.toContain('{{args.repo}}');
+    expect(re).toBe(src);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Not-a-workflow inputs.
 // ---------------------------------------------------------------------------
 describe('parseWorkflowJs — non-workflows', () => {

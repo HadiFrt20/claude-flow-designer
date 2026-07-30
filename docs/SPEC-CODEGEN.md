@@ -41,14 +41,20 @@ return <expr>
 | kind | emission |
 |---|---|
 | `workflow.meta` | `export const meta = { name, description }` (header; not a statement in the body) |
-| `agent` | `const <bind> = await agent(\`<prompt>\`, { schema?, label?, model? })` |
-| `pipeline` | `const <bind> = await pipeline(<sourceExpr>, item => agent(\`<itemPrompt>\`, { label?, schema?, model? }))` |
+| `agent` | `const <bind> = await agent(<promptArg>, { schema?, label?, model?, …extraOpts })` |
+| `pipeline` | `const <bind> = await pipeline(<sourceExpr>, item => agent(<promptArg>, { label?, schema?, model?, …extraOpts }))` |
+| `parallel` | `const <bind> = await parallel(<sourceExpr>.map(<itemVar> => () => agent(<promptArg>, { … })))` (concurrent fan-out) |
 | `branch` | `if (<cond>) { <then-arm, topo order> } else { <else-arm> }`; `<cond>` = `<sourceBind>.<field>` (or `!…` if `negate`) |
 | `loopUntilCheck` | a bounded `while` (see below) |
 | `output.return` | `return <expr>;` — the last statement; exactly one |
+| `raw` | the node's `code`, emitted verbatim at its topo position |
 
-- `<sourceExpr>` for a pipeline: `<sourceBind>.<sourceField>` when the source is a schema-producing
-  node, or `args` when `source` is the meta/args.
+- `<promptArg>` is `promptExpr` emitted verbatim when set (a programmatic prompt like
+  `researchPrompt(d)`), otherwise a backtick template rendered from `prompt`/`itemPrompt`'s {{refs}}.
+- `extraOpts` is a map of passthrough opt keys (`phase`/`effort`/`agentType`/…) whose values are
+  verbatim JS, emitted after `schema`/`label`/`model` in insertion order. Keys are bare identifiers.
+- `<sourceExpr>` for a pipeline/parallel: `<sourceBind>.<sourceField>` when the source is a
+  schema-producing node, `args[.field]` when `source` is `args`, or a raw-declared binding name.
 - `<expr>` for return: `<sourceBind>` then optional `.<field>`, then optional `.filter(Boolean)`
   (`filterBoolean`) or `.flat()` (`flatten`).
 - **Binding names** (`bindingName`): camelCase(`label` || `data.name` || `kind`) → sanitize to a
@@ -119,19 +125,26 @@ silently emits). Path-containment (`isSafePath`) is checked first for every file
 
 ### `parseWorkflowJs(source, slug) → WorkflowGraph | null` (M7)
 
-acorn-parse the script; walk top-level statements in source order:
+acorn-parse the script; walk top-level statements in source order, emitting ONE node per statement
+(M8 — no merging):
 - `export const meta = { name, description, … }` → the `workflow.meta` node (extra keys like
   `phases` are dropped; the graph slug is derived from `meta.name` when it is a valid slug, else the
   passed-in `slug`, keeping name↔slug in sync — CF611).
-- `const x = await agent(<template literal>, <opts?>)` → `agent` (opts = schema/label/model only).
+- `const x = await agent(<prompt>, <opts?>)` → `agent`. The prompt is a template (`prompt`) when it
+  reconstructs to {{refs}}, else a verbatim `promptExpr` (a function-call/concatenation prompt like
+  `researchPrompt(d)`). Opts: `schema`/`label`/`model` typed; any other bare-identifier key →
+  `extraOpts` (verbatim value); a computed/spread/non-identifier key makes the whole call fall to raw.
 - `const x = await pipeline(<items>, item => agent(…))` → `pipeline` (arrow param must be `item`).
+- `const x = await parallel(<source>.map(<v> => () => agent(…)))` → `parallel` (preserves `<v>` as
+  `itemVar`). (M8)
 - `return <ref>` / `<ref>.field` / `<ref>.filter(Boolean)` / `<ref>.flat()` → `output.return`.
 - **anything else** (schema consts, helpers, `if/else`, `while`, `for`, `Promise.all`, complex
-  returns) → collapsed into a **`raw`** node, verbatim, carrying its declared bindings in `produces`.
-  Consecutive un-typed statements group into one raw node.
+  returns) → a per-statement **`raw`** node, verbatim, carrying its declared bindings in `produces`.
 
-A `{{ref.field}}` inside a prompt is only reconstructed when the interpolation is a shape codegen
-emits (`${JSON.stringify(x)}`, `${bind.field}`, `${item}`); otherwise the whole `agent(...)` falls
-back to raw. **Property**: for codegen's own output `generate(parseWorkflowJs(generate(g).js)) ==
-generate(g)` byte-for-byte; hand-authored input round-trips as "valid + self-lint-passing" (may be
+A prompt template's {{ref}} is reconstructed by exact emit shape (see `Refs {bare,node}`): a node
+binding from `${JSON.stringify(bind)}` (whole) / `${bind.field}`; a per-call local (item/`itemVar`) or
+raw-declared const from a BARE `${name}` / `${name.field}`; `args` from `${JSON.stringify(args)}` /
+`${args.field}`. Anything else (or a template whose own text contains literal `{{`) keeps the prompt
+as verbatim `promptExpr`. **Property**: for codegen's own output `generate(parseWorkflowJs(generate(g).js))
+== generate(g)` byte-for-byte; hand-authored input round-trips as "valid + self-lint-passing" (may be
 canonicalized). Nodes chain linearly meta → n₀ → n₁ → … in source order.

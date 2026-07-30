@@ -52,16 +52,16 @@ still generic graph checks) and **CF6xx** workflow-script rules. RuleIds are sta
 |---|---|---|---|
 | CF601 | error | No `workflow.meta` node, or more than one | insert / delete extras |
 | CF602 | error | `workflow.meta.name` empty or not a valid `/command` slug | derive from graph.slug |
-| CF604 | error | `agent`/`pipeline`/`loopUntilCheck` prompt is empty | — |
+| CF604 | error | `agent`/`pipeline`/`parallel`/`loopUntilCheck` template prompt is empty | — |
 | CF605 | error | Template ref `{{nodeId}}`/`{{nodeId.field}}` targets a node that doesn't exist, isn't upstream, or produces no binding | — |
 | CF606 | error | Zero or more than one `output.return`, or a node exists downstream of the return | — |
-| CF607 | error | `pipeline.source` is not a list (missing `sourceField`, or field's JSON-Schema `type` ≠ array) | add / point `sourceField` |
+| CF607 | error | `pipeline`/`parallel` source is not a list (missing `sourceField`, or field's JSON-Schema `type` ≠ array) | add / point `sourceField` |
 | CF608 | error | `branch` without exactly one `then` and one `else` outgoing edge | — |
 | CF609 | error | Branch-arm-exclusive node referenced from outside its arm (non-linearizable merge) | — |
 | CF610 | warn | `loopUntilCheck` missing `checkPrompt`/`fixPrompt`, or `passField` absent from `checkSchema` | — |
 | CF611 | warn | `workflow.meta.name` disagrees with graph `meta.slug` (file is `<slug>.js` but command is `/<name>`) | sync name↔slug |
-| CF613 | warn | Unknown `model` string on an agent/pipeline/loop stage (not in known aliases/IDs) | — |
-| CF614 | warn | `pipeline` fan-out with no `itemLabel` (harder to read the runtime feed) | generate label |
+| CF613 | warn | Unknown `model` string on an agent/pipeline/parallel/loop stage (not in known aliases/IDs) | — |
+| CF614 | warn | `pipeline`/`parallel` fan-out with no `itemLabel` (harder to read the runtime feed) | generate label |
 | CF615 | info | Downstream `.field` ref on an `agent` with no `schema` (structured output recommended) | add schema |
 | CF616 | info | Graph contains a `raw` node — imported code kept verbatim (not modeled as typed nodes) | — |
 
