@@ -47,8 +47,20 @@
 - [x] Validation: CF001–008 retargeted + CF6xx; strict doc↔code matrix parity.
 - [x] Templates: audit-routes, summarize, test-fix, branch-review, grade-prs; fixtures
       drift-checked.
-- [x] Importer sidecar-only (one-way `.js`); canvas + web + vscode retargeted.
+- [x] Importer (sidecar preferred; one-way `.js` — superseded by M7); canvas + web + vscode retargeted.
 - [x] code-reviewer APPROVE (4 blockers + 2 majors fixed); 288 tests; lint clean.
+
+## M7 — JS → graph importer (real workflows on the canvas)
+- [x] `raw` node kind (verbatim JS the importer can't type; produces?); emitted unchanged.
+- [x] `parseWorkflowJs`: acorn-walk .js → typed nodes (agent/pipeline/return) + `raw`
+      fallback for the rest; sidecar becomes a derived projection, not required.
+- [x] Self-lint exempts identifiers inside raw regions (emitter-recorded byte spans);
+      CF606 counts raw returns; CF605 resolves raw-declared bindings; CF616 (info).
+- [x] Canvas `code`/`stringList` fields + raw palette/category; vscode picker parses
+      a chosen .js onto the canvas.
+- [x] Round-trip: 5 gallery scripts parse→generate byte-identical; ironclad (219-line
+      real workflow) re-generates valid + self-lint-passing.
+- [x] code-reviewer APPROVE after 4 rounds (B1–B4, M1–M3, m1); 328 tests; lint clean.
 
 ## M5 — Sharing & polish
 - [ ] Plugin-bundle export target.

@@ -8,5 +8,5 @@ M3 | done | standalone web app: WebHostBridge (FS Access dir-write + zip fallbac
 M4 | done | VS Code extension: custom editor (canvas webview, strict CSP), postMessage HostBridge, export w/ native per-file diff-confirm, new/import/export/run commands, Claude Workflows tree view; installable .vsix; code-reviewer APPROVE; CI green (real vsce gate)
 M5 | pending |
 M6 | done | PIVOT: designer now targets Claude Code dynamic-workflow scripts (.claude/workflows/*.js) — 6-kind schema, workflow.ts emitter, acorn self-lint (scope-aware), CF6xx rules, sidecar round-trip, canvas + web + vscode retargeted; 288 tests, code-reviewer APPROVE; supersedes the M0–M4 asset model
-M7 | in-progress | JS→graph importer: parse real .claude/workflows/*.js onto the canvas (best-effort typed nodes + opaque raw nodes); sidecar becomes derived
+M7 | done | JS→graph importer: parseWorkflowJs parses real .claude/workflows/*.js onto the canvas (typed nodes + verbatim `raw` nodes); sidecar is now derived. 5 gallery scripts round-trip byte-identical, ironclad re-generates valid; 328 tests; code-reviewer APPROVE after 4 rounds (B1 prompt-ref, B2 CF606 parity, B3/B4 raw self-lint exemption)
 <!-- statuses: pending | in-progress | done -->
