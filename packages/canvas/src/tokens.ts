@@ -4,13 +4,14 @@
 // saturated colors and appear only as a 2px left node border + port dots + minimap.
 import type { NodeKind } from '@clauflow/core';
 
-/** The four visual categories a workflow node kind maps to. */
-export type NodeCategory = 'meta' | 'agent' | 'pipeline' | 'control';
+/** The visual categories a workflow node kind maps to. */
+export type NodeCategory = 'meta' | 'agent' | 'pipeline' | 'control' | 'raw';
 
 export function categoryOf(kind: NodeKind): NodeCategory {
   if (kind === 'workflow.meta') return 'meta';
   if (kind === 'agent') return 'agent';
   if (kind === 'pipeline') return 'pipeline';
+  if (kind === 'raw') return 'raw';
   // branch, loopUntilCheck, output.return — control flow / terminals.
   return 'control';
 }
@@ -21,6 +22,7 @@ export const CATEGORY_GLYPH: Record<NodeCategory, string> = {
   agent: '·',
   pipeline: '❖',
   control: '◆',
+  raw: '{ }',
 };
 
 // Accent colors (ANSI-inspired). Exposed as CSS variables so the extension can
@@ -30,6 +32,7 @@ export const ACCENT: Record<NodeCategory, string> = {
   agent: 'var(--cf-accent-agent, #4ec9d4)', // cyan
   pipeline: 'var(--cf-accent-pipeline, #b48ead)', // violet
   control: 'var(--cf-accent-control, #d16969)', // red
+  raw: 'var(--cf-accent-raw, #808080)', // grey — verbatim, non-visual
 };
 
 /** Surface/text/diagnostic tokens → --vscode-* with web fallbacks (dark-first). */

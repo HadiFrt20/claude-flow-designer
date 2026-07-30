@@ -63,6 +63,7 @@ still generic graph checks) and **CF6xx** workflow-script rules. RuleIds are sta
 | CF613 | warn | Unknown `model` string on an agent/pipeline/loop stage (not in known aliases/IDs) | — |
 | CF614 | warn | `pipeline` fan-out with no `itemLabel` (harder to read the runtime feed) | generate label |
 | CF615 | info | Downstream `.field` ref on an `agent` with no `schema` (structured output recommended) | add schema |
+| CF616 | info | Graph contains a `raw` node — imported code kept verbatim (not modeled as typed nodes) | — |
 
 > CF007 (dup slug) is retired — a graph is one workflow; the meta.name↔slug concern is CF611.
 

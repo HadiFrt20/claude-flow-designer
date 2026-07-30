@@ -7,6 +7,7 @@ import * as vscode from 'vscode';
 import {
   generate,
   parseProject,
+  parseWorkflowJs,
   safeParseGraph,
   serializeGraph,
   emptyGraph,
@@ -273,8 +274,8 @@ async function importToNewGraph(): Promise<void> {
     })),
     ...detected.workflows.map((rel): WorkflowPick => ({
       label: `$(file-code) ${rel}`,
-      description: 'workflow script (read-only)',
-      detail: 'One-way output — opens as JavaScript, not on the canvas.',
+      description: 'workflow script',
+      detail: 'Parsed onto the canvas — typed nodes where possible, verbatim raw blocks otherwise.',
       rel,
       target: 'js',
     })),
@@ -293,22 +294,40 @@ async function importToNewGraph(): Promise<void> {
   if (!pick) return;
 
   const fileUriForRel = vscode.Uri.joinPath(root, pick.rel);
-  if (pick.target === 'js') {
-    // One-way: just open the script as read-only text.
-    await vscode.window.showTextDocument(fileUriForRel, { preview: false });
-    return;
-  }
-  // Sidecar: parse it and open a fresh graph on the canvas.
   const content = await fs.read(pick.rel);
-  const parsed = content ? safeParseGraph(safeJson(content)) : null;
-  if (!parsed || !parsed.success) {
-    notify('error', `Could not parse ${pick.rel} as a workflow graph.`);
+  if (content === null) {
+    notify('error', `Could not read ${pick.rel}.`);
     return;
   }
-  const g = parsed.data;
+
+  let g: WorkflowGraph | null;
+  if (pick.target === 'js') {
+    // Parse the emitted/authored .js into a graph (typed nodes + raw fallback).
+    g = parseWorkflowJs(content, jsSlug(pick.rel));
+    if (!g) {
+      // Not a parseable workflow — open it as text so the user can still read it.
+      notify('warn', `${pick.rel} isn't a recognizable workflow (no export const meta); opening as text.`);
+      await vscode.window.showTextDocument(fileUriForRel, { preview: false });
+      return;
+    }
+  } else {
+    const parsed = safeParseGraph(safeJson(content));
+    if (!parsed.success) {
+      notify('error', `Could not parse ${pick.rel} as a workflow graph.`);
+      return;
+    }
+    g = parsed.data;
+  }
+
   const uri = await uniqueUri(root, g.meta.slug || 'imported', '.clauflow.json');
   await vscode.workspace.fs.writeFile(uri, Buffer.from(serializeGraph(g), 'utf8'));
   await vscode.commands.executeCommand('vscode.openWith', uri, 'clauflow.editor');
+}
+
+/** `<slug>` from a `.claude/workflows/<slug>.js` path (parser slug fallback). */
+function jsSlug(rel: string): string {
+  const m = rel.match(/([^/]+)\.js$/);
+  return m ? m[1]! : 'imported';
 }
 
 async function exportActiveGraph(): Promise<void> {

@@ -106,6 +106,27 @@ silently emits). Path-containment (`isSafePath`) is checked first for every file
 
 ## Importer (round-trip)
 
-`parseProject(files) → WorkflowGraph | null`: read the `<slug>.clauflow.json` sidecar and
-`parseGraphJson` it (the authoritative round-trip path). Returns `null` when no sidecar is present.
-The emitted `.js` is one-way — codegen does NOT reconstruct a graph from JavaScript.
+`parseProject(files) → WorkflowGraph | null`: if a `<slug>.clauflow.json` sidecar is present,
+`parseGraphJson` it (the exact round-trip path, wins). Otherwise **parse the emitted
+`.claude/workflows/<slug>.js`** via `parseWorkflowJs` — real Claude Code workflows are authored as
+`.js` and never ship a sidecar. Returns `null` only when neither a sidecar nor a workflow script
+(a `.js` with `export const meta`) is present.
+
+### `parseWorkflowJs(source, slug) → WorkflowGraph | null` (M7)
+
+acorn-parse the script; walk top-level statements in source order:
+- `export const meta = { name, description, … }` → the `workflow.meta` node (extra keys like
+  `phases` are dropped; the graph slug is derived from `meta.name` when it is a valid slug, else the
+  passed-in `slug`, keeping name↔slug in sync — CF611).
+- `const x = await agent(<template literal>, <opts?>)` → `agent` (opts = schema/label/model only).
+- `const x = await pipeline(<items>, item => agent(…))` → `pipeline` (arrow param must be `item`).
+- `return <ref>` / `<ref>.field` / `<ref>.filter(Boolean)` / `<ref>.flat()` → `output.return`.
+- **anything else** (schema consts, helpers, `if/else`, `while`, `for`, `Promise.all`, complex
+  returns) → collapsed into a **`raw`** node, verbatim, carrying its declared bindings in `produces`.
+  Consecutive un-typed statements group into one raw node.
+
+A `{{ref.field}}` inside a prompt is only reconstructed when the interpolation is a shape codegen
+emits (`${JSON.stringify(x)}`, `${bind.field}`, `${item}`); otherwise the whole `agent(...)` falls
+back to raw. **Property**: for codegen's own output `generate(parseWorkflowJs(generate(g).js)) ==
+generate(g)` byte-for-byte; hand-authored input round-trips as "valid + self-lint-passing" (may be
+canonicalized). Nodes chain linearly meta → n₀ → n₁ → … in source order.

@@ -184,6 +184,25 @@ function Field({ f, store, node, diag }: { f: FieldDescriptor; store: EditorStor
         return (
           <textarea value={(raw as string) ?? ''} onChange={(e) => set(e.target.value)} aria-label={f.label} rows={4} style={{ ...inputStyle(invalid), fontFamily: TOKENS.monoFont }} />
         );
+      case 'code':
+        // Verbatim JS (raw node). Kept as-is; not parsed. Taller monospace area.
+        return (
+          <textarea value={(raw as string) ?? ''} onChange={(e) => set(e.target.value)} aria-label={f.label} rows={14} spellCheck={false} style={{ ...inputStyle(invalid), fontFamily: TOKENS.monoFont, whiteSpace: 'pre', overflowWrap: 'normal', overflowX: 'auto' }} />
+        );
+      case 'stringList':
+        // Newline-separated → string[]; blank → undefined.
+        return (
+          <textarea
+            value={Array.isArray(raw) ? (raw as string[]).join('\n') : ''}
+            onChange={(e) => {
+              const list = e.target.value.split('\n').map((s) => s.trim()).filter(Boolean);
+              set(list.length ? list : undefined);
+            }}
+            aria-label={f.label}
+            rows={3}
+            style={{ ...inputStyle(invalid), fontFamily: TOKENS.monoFont }}
+          />
+        );
       case 'resultRef':
       case 'fieldPath':
       case 'model':

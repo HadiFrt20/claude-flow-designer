@@ -82,6 +82,17 @@ export const returnDataSchema = z.object({
   transform: z.enum(['none', 'filterBoolean', 'flatten']).default('none'),
 });
 
+/**
+ * Verbatim top-level JS the importer could not (or chose not to) model as a typed
+ * node — schema consts, helper functions, `for` loops, `Promise.all`, ad-hoc
+ * expressions. Emitted UNCHANGED at its position in the script. `produces` lists
+ * the binding names it introduces so downstream typed nodes/refs still resolve.
+ */
+export const rawDataSchema = z.object({
+  code: z.string(), // one or more top-level statements, verbatim (no trailing newline)
+  produces: z.array(z.string()).optional(), // binding names this block declares
+});
+
 // ---------------------------------------------------------------------------
 // Node union (discriminated on `kind`)
 // ---------------------------------------------------------------------------
@@ -99,6 +110,7 @@ export const workflowNodeSchema = z.discriminatedUnion('kind', [
   node('branch', branchDataSchema),
   node('loopUntilCheck', loopUntilCheckDataSchema),
   node('output.return', returnDataSchema),
+  node('raw', rawDataSchema),
 ]);
 
 export type WorkflowNode = z.infer<typeof workflowNodeSchema>;
@@ -106,7 +118,7 @@ export type NodeKind = WorkflowNode['kind'];
 
 /** All node kinds, for exhaustiveness checks and edge-compatibility tables. */
 export const NODE_KINDS = [
-  'workflow.meta', 'agent', 'pipeline', 'branch', 'loopUntilCheck', 'output.return',
+  'workflow.meta', 'agent', 'pipeline', 'branch', 'loopUntilCheck', 'output.return', 'raw',
 ] as const satisfies readonly NodeKind[];
 
 // Narrowed data types (handy for rule + codegen code).
@@ -116,6 +128,7 @@ export type PipelineData = z.infer<typeof pipelineDataSchema>;
 export type BranchData = z.infer<typeof branchDataSchema>;
 export type LoopUntilCheckData = z.infer<typeof loopUntilCheckDataSchema>;
 export type ReturnData = z.infer<typeof returnDataSchema>;
+export type RawData = z.infer<typeof rawDataSchema>;
 
 /** Type guard: narrow a node to a specific kind. */
 export function isKind<K extends NodeKind>(

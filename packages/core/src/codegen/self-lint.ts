@@ -26,11 +26,13 @@ function lintJson(file: GeneratedFile): void {
 
 // Identifiers a workflow script may reference without declaring them: the
 // workflow-runtime globals plus the standard JS built-ins codegen can emit.
+// The runtime set is what Claude Code injects into a dynamic workflow's scope —
+// verified against real authored workflows (phase()/log() are used heavily).
 const GLOBALS = new Set([
   // workflow runtime
-  'agent', 'pipeline', 'args', 'meta', 'console',
-  // JS built-ins reachable from emitted output
-  'JSON', 'Boolean', 'Number', 'String', 'Object', 'Array', 'Math', 'Promise',
+  'agent', 'pipeline', 'parallel', 'phase', 'log', 'args', 'meta', 'console',
+  // JS built-ins reachable from emitted or hand-authored workflow output
+  'JSON', 'Boolean', 'Number', 'String', 'Object', 'Array', 'Math', 'Promise', 'Date', 'RegExp', 'Set', 'Map',
   'undefined', 'null', 'NaN', 'Infinity',
 ]);
 
@@ -195,6 +197,39 @@ function firstUnresolved(node: acorn.Node, chain: Scope[]): string | null {
         if (bad) return bad;
       }
       return firstUnresolved(pr.value, chain);
+    }
+    case 'ForOfStatement':
+    case 'ForInStatement': {
+      // `for (const x of xs)` / `for (const x in o)`: the left binding scopes the
+      // right expression's siblings and the body. Resolve the iterable first
+      // (outer scope), then the body with the loop var(s) in scope.
+      const f = node as unknown as { left: acorn.Node; right: acorn.Node; body: acorn.Node };
+      const bad = firstUnresolved(f.right, chain);
+      if (bad) return bad;
+      const scope: Scope = new Set();
+      if (f.left.type === 'VariableDeclaration') {
+        for (const d of (f.left as unknown as { declarations: { id: acorn.Node }[] }).declarations) patternNames(d.id, scope);
+      } else {
+        // `for (x of …)` assigning an existing binding — no new scope var.
+      }
+      return firstUnresolved(f.body, [...chain, scope]);
+    }
+    case 'ForStatement': {
+      // `for (let i = 0; i < n; i++) { … }`: init declarations scope test/update/body.
+      const f = node as unknown as { init?: acorn.Node; test?: acorn.Node; update?: acorn.Node; body: acorn.Node };
+      const scope: Scope = new Set();
+      if (f.init?.type === 'VariableDeclaration') {
+        for (const d of (f.init as unknown as { declarations: { id: acorn.Node }[] }).declarations) patternNames(d.id, scope);
+      }
+      const next = [...chain, scope];
+      for (const part of [f.init, f.test, f.update, f.body]) {
+        if (!part) continue;
+        // The init's declared ids are declarations, not references — skip re-checking
+        // them by resolving the declarator inits only (VariableDeclarator handles that).
+        const bad = firstUnresolved(part, next);
+        if (bad) return bad;
+      }
+      return null;
     }
     case 'Identifier': {
       const name = (node as unknown as { name: string }).name;

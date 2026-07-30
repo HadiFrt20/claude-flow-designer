@@ -13,6 +13,7 @@ import type {
   BranchData,
   LoopUntilCheckData,
   ReturnData,
+  RawData,
 } from '../src/schema/nodes.js';
 
 const pos = { x: 0, y: 0 };
@@ -39,6 +40,9 @@ export const n = {
   }),
   ret: (id: string, data: ReturnData, label = id): WorkflowNode => ({
     id, kind: 'output.return', label, position: pos, data,
+  }),
+  raw: (id: string, data: RawData, label = id): WorkflowNode => ({
+    id, kind: 'raw', label, position: pos, data,
   }),
 };
 
@@ -272,6 +276,15 @@ export const fixtures: Record<RuleId, { hit: WorkflowGraph; miss: WorkflowGraph 
        n.agent('b', { prompt: 'Read {{a.result}} and continue.' }),
        n.ret('ret', { source: 'b', transform: 'none' })],
       [e('meta', 'a'), e('a', 'b'), e('b', 'ret')],
+    ),
+    miss: valid(),
+  },
+  CF616: {
+    // Graph contains a raw node (imported code kept verbatim).
+    hit: g(
+      [n.meta('meta', { name: 't', description: 'd' }),
+       n.raw('raw', { code: 'const merged = [].flat()\nreturn merged', produces: ['merged'] }, 'code')],
+      [e('meta', 'raw')],
     ),
     miss: valid(),
   },

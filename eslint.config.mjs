@@ -4,7 +4,11 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['**/dist/**', '**/dist-tsc/**', '**/node_modules/**', '**/*.vsix'],
+    ignores: [
+      '**/dist/**', '**/dist-tsc/**', '**/node_modules/**', '**/*.vsix',
+      // Real workflow .js used as parser test data — verbatim, not our source.
+      '**/import-fixtures/**', '**/fixtures/**/*.js',
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

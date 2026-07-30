@@ -16,7 +16,9 @@ export type FieldType =
   | 'resultRef' // reference to a producing node id (or 'args')
   | 'fieldPath' // dotted identifier path into a result
   | 'transform' // return transform: none | filterBoolean | flatten
-  | 'json'; // arbitrary object literal (e.g. an agent schema)
+  | 'json' // arbitrary object literal (e.g. an agent schema)
+  | 'code' // verbatim JS (raw node) — monospace, no parsing
+  | 'stringList'; // newline-separated strings → string[] (raw.produces)
 
 export interface FieldDescriptor {
   /** Data key (dotted allowed for nested, but M6 fields are flat). */
@@ -74,6 +76,10 @@ export const FIELD_DESCRIPTORS: Record<NodeKind, FieldDescriptor[]> = {
     { key: 'field', label: 'Field', type: 'fieldPath', group: 'Advanced', hint: 'Return source.field instead of the whole result.' },
     { key: 'transform', label: 'Transform', type: 'transform', group: 'Advanced', options: TRANSFORMS, hint: 'filterBoolean → .filter(Boolean); flatten → .flat().' },
   ],
+  raw: [
+    { key: 'code', label: 'Code', type: 'code', group: 'Basic', hint: 'Imported JS kept verbatim — edited as text, re-exported unchanged.' },
+    { key: 'produces', label: 'Declares bindings', type: 'stringList', group: 'Advanced', hint: 'Binding names this block introduces (so downstream refs resolve). One per line.' },
+  ],
 };
 
 /** Palette entries grouped as in DESIGN-BRIEF (Entry / Agents / Control). */
@@ -101,6 +107,7 @@ export const PALETTE: { group: string; entries: PaletteEntry[] }[] = [
       { kind: 'branch', label: 'Branch (if/else)' },
       { kind: 'loopUntilCheck', label: 'Loop until check' },
       { kind: 'output.return', label: 'Return' },
+      { kind: 'raw', label: 'Raw code' },
     ],
   },
 ];
@@ -120,5 +127,7 @@ export function defaultData(kind: NodeKind): Record<string, unknown> {
       return { checkPrompt: '', fixPrompt: '', passField: 'passed', maxRounds: 2 };
     case 'output.return':
       return { source: '', transform: 'none' };
+    case 'raw':
+      return { code: '' };
   }
 }

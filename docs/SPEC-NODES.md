@@ -56,7 +56,7 @@ interpolations against binding names:
 | `{{item}}` | (inside `pipeline`) the current item |
 | `{{check}}` | (inside `loopUntilCheck` fixPrompt) the checker's result |
 
-### The six kinds
+### The seven kinds
 
 | kind | data | compiles to |
 |---|---|---|
@@ -66,11 +66,17 @@ interpolations against binding names:
 | `branch` | source (resultRef), field (fieldPath), negate? | `if (<cond>) { …then arm… } else { …else arm… }` — two outgoing edges tagged `sourceHandle: "then"` / `"else"` |
 | `loopUntilCheck` | checkPrompt, checkSchema?, passField='passed', fixPrompt, maxRounds=2, checkModel?, fixModel? | a bounded `while` loop (check → break on pass / no-progress → fix → repeat) |
 | `output.return` | source (resultRef), field?, transform: 'none'\|'filterBoolean'\|'flatten' | `return <expr>;` (sink; last statement; exactly one) |
+| `raw` | code (verbatim JS), produces? (binding names it declares) | the `code`, emitted UNCHANGED at its topo position |
 
 Notes:
 - `workflow.meta` is the sole entry point (like a single primary trigger). Exactly one per graph.
 - `agent` / `pipeline` / `loopUntilCheck` each produce exactly one `const` binding. `branch` and
   `output.return` produce no binding.
+- `raw` (M7) is the **import escape hatch**: top-level statements the JS→graph importer can't model
+  as typed nodes (schema consts, helper functions, `for` loops, `Promise.all`, complex returns) are
+  preserved verbatim in a `raw` node. `produces` lists the bindings it declares so downstream typed
+  nodes/refs resolve; a `raw` block whose code contains a top-level `return` is itself a valid sink
+  (CF606). Codegen emits `code` unchanged, so an imported workflow re-exports faithfully.
 - `pipeline.source` must resolve to a list: either `args` (used as the array) or a schema-producing
   node's `sourceField` whose JSON-Schema `type` is `array` (CF607).
 - `loopUntilCheck` expands to a `while` (a NODE), so `findCycle` still legitimately forbids graph

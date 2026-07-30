@@ -46,8 +46,8 @@ describe('validation matrix: strict doc <-> code parity', () => {
     expect(codeIds).toEqual(docIds);
   });
 
-  it('the catalog documents 20 rules', () => {
-    expect(documented.size).toBe(20);
+  it('the catalog documents 21 rules', () => {
+    expect(documented.size).toBe(21);
   });
 
   it('registered rule ids are unique', () => {

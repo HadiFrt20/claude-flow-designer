@@ -1,5 +1,6 @@
 // Workflow-script rules CF601–CF615 (CF612 retired). See docs/SPEC-VALIDATION.md
 // ("Workflow script").
+import * as acorn from 'acorn';
 import type { Diagnostic, Rule } from '../diagnostics.js';
 import type { WorkflowNode } from '../schema/nodes.js';
 import { FIELD_PATH_RE } from '../schema/nodes.js';
@@ -7,6 +8,21 @@ import { nodesOfKind, topoOrder } from '../schema/graph-utils.js';
 import { producesBinding } from '../codegen/model.js';
 import { DOCS_URLS, KNOWN_MODELS } from './helpers.js';
 import { addNode, freshId, patchNodeData, removeNode } from './quickfix-utils.js';
+
+/**
+ * Does a `raw` node's code contain a top-level `return`? Imported workflows whose
+ * return value is a complex expression (e.g. `return { a, b }`) keep the return
+ * inside a raw block rather than an output.return node, and that still satisfies
+ * the "workflow has a return" invariant (CF606).
+ */
+function rawHasReturn(code: string): boolean {
+  try {
+    const prog = acorn.parse(code, { ecmaVersion: 'latest', sourceType: 'module', allowAwaitOutsideFunction: true, allowReturnOutsideFunction: true });
+    return prog.body.some((s) => s.type === 'ReturnStatement');
+  } catch {
+    return false;
+  }
+}
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/;
 
@@ -127,6 +143,14 @@ const cf605: Rule = {
     const order = topoOrder(graph);
     const rank = new Map(order.map((id, i) => [id, i]));
     const byId = new Map(graph.nodes.map((n) => [n.id, n]));
+    // Bindings a raw block declares (by NAME, not node id) — a typed node may
+    // legitimately reference one via {{name}}. Track its topo rank for upstream-ness.
+    const rawBinding = new Map<string, number>();
+    for (const r of nodesOfKind(graph, 'raw')) {
+      for (const name of r.data.produces ?? []) {
+        rawBinding.set(name, Math.min(rawBinding.get(name) ?? Infinity, rank.get(r.id) ?? Infinity));
+      }
+    }
     const diags: Diagnostic[] = [];
     const locals: Record<string, Set<string>> = {
       pipeline: new Set(['item']),
@@ -143,6 +167,13 @@ const cf605: Rule = {
             continue;
           }
           if (ref.id === 'args' || allowedLocal.has(ref.id)) continue;
+          // A ref to a raw-declared binding resolves if the raw block is upstream.
+          if (rawBinding.has(ref.id)) {
+            if ((rawBinding.get(ref.id) ?? Infinity) >= (rank.get(n.id) ?? -1)) {
+              diags.push({ ruleId: 'CF605', severity: 'error', nodeId: n.id, field, message: `Template ref {{${ref.raw}}} is not upstream of this node.`, docsUrl: DOCS_URLS.workflows });
+            }
+            continue;
+          }
           const target = byId.get(ref.id);
           if (!target) {
             diags.push({ ruleId: 'CF605', severity: 'error', nodeId: n.id, field, message: `Template ref {{${ref.raw}}} references unknown node "${ref.id}".`, docsUrl: DOCS_URLS.workflows });
@@ -163,7 +194,11 @@ const cf606: Rule = {
   severity: 'error',
   run(graph) {
     const returns = nodesOfKind(graph, 'output.return');
+    // A raw block that itself contains a top-level `return` (imported complex
+    // return expression) is an alternative, valid sink.
+    const rawReturns = nodesOfKind(graph, 'raw').filter((n) => rawHasReturn(n.data.code));
     if (returns.length === 0) {
+      if (rawReturns.length >= 1) return []; // the raw block returns
       return [{ ruleId: 'CF606', severity: 'error', message: 'Workflow has no output.return node.', docsUrl: DOCS_URLS.workflows }];
     }
     const diags: Diagnostic[] = returns.slice(1).map((n) => ({ ruleId: 'CF606', severity: 'error', nodeId: n.id, message: 'More than one output.return node.', docsUrl: DOCS_URLS.workflows }));
@@ -408,6 +443,22 @@ const cf615: Rule = {
   },
 };
 
+const cf616: Rule = {
+  id: 'CF616',
+  severity: 'info',
+  run(graph) {
+    return nodesOfKind(graph, 'raw').map(
+      (n): Diagnostic => ({
+        ruleId: 'CF616',
+        severity: 'info',
+        nodeId: n.id,
+        message: 'Imported code the designer could not model as typed nodes — kept verbatim and editable as text; re-exported unchanged.',
+        docsUrl: DOCS_URLS.workflows,
+      }),
+    );
+  },
+};
+
 export const workflowRules: Rule[] = [
-  cf601, cf602, cf604, cf605, cf606, cf607, cf608, cf609, cf610, cf611, cf613, cf614, cf615,
+  cf601, cf602, cf604, cf605, cf606, cf607, cf608, cf609, cf610, cf611, cf613, cf614, cf615, cf616,
 ];

@@ -3,7 +3,7 @@
 import type { GeneratedFile } from '../schema/types.js';
 import type { WorkflowGraph } from '../schema/graph.js';
 import type {
-  WorkflowNode, AgentData, PipelineData, LoopUntilCheckData, ReturnData, BranchData,
+  WorkflowNode, AgentData, PipelineData, LoopUntilCheckData, ReturnData, BranchData, RawData,
 } from '../schema/nodes.js';
 import { FIELD_PATH_RE } from '../schema/nodes.js';
 import { stableJson } from './json.js';
@@ -219,6 +219,9 @@ function emitStatement(node: WorkflowNode, names: Map<string, string>, defaultMo
       return emitLoop(node.data as LoopUntilCheckData, names.get(node.id)!, names, defaultModel);
     case 'output.return':
       return [`return ${returnExpr(node.data as ReturnData, names)}`];
+    case 'raw':
+      // Emit the preserved source verbatim; a blank line keeps spacing consistent.
+      return [(node.data as RawData).code, ''];
     default:
       return [];
   }
