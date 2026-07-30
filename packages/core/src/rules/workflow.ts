@@ -64,12 +64,16 @@ function structuredRefsOf(node: WorkflowNode): { field: string; id: string }[] {
   }
 }
 
-/** Prompt-bearing fields per kind, for CF604/CF605 scanning. */
+/**
+ * Template-prompt fields per kind, for CF604/CF605 scanning. A node using a verbatim
+ * `promptExpr` (programmatic prompt) has no template text and no {{refs}} to scan, so
+ * it contributes nothing here — CF605 doesn't apply to it.
+ */
 function promptsOf(node: WorkflowNode): { field: string; text: string }[] {
   switch (node.kind) {
-    case 'agent': return [{ field: 'prompt', text: node.data.prompt }];
-    case 'pipeline': return [{ field: 'itemPrompt', text: node.data.itemPrompt }];
-    case 'parallel': return [{ field: 'itemPrompt', text: node.data.itemPrompt }];
+    case 'agent': return node.data.prompt !== undefined ? [{ field: 'prompt', text: node.data.prompt }] : [];
+    case 'pipeline': return node.data.itemPrompt !== undefined ? [{ field: 'itemPrompt', text: node.data.itemPrompt }] : [];
+    case 'parallel': return node.data.itemPrompt !== undefined ? [{ field: 'itemPrompt', text: node.data.itemPrompt }] : [];
     case 'loopUntilCheck':
       return [
         { field: 'checkPrompt', text: node.data.checkPrompt },

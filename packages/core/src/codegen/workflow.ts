@@ -94,6 +94,21 @@ function inlineJson(value: unknown): string {
   return stableJson(value).trimEnd(); // stableJson adds a trailing newline
 }
 
+/**
+ * The first argument of an `agent(...)` call: a verbatim JS expression when the node
+ * carries `promptExpr` (a programmatic prompt like `researchPrompt(d)`, emitted
+ * as-is), otherwise a backtick template rendered from `prompt`'s {{refs}}.
+ */
+function promptArg(
+  promptExpr: string | undefined,
+  prompt: string | undefined,
+  names: Map<string, string>,
+  locals: Record<string, string> = {},
+): string {
+  if (promptExpr !== undefined) return promptExpr;
+  return `\`${renderPrompt(prompt ?? '', names, locals)}\``;
+}
+
 // --- emitter ----------------------------------------------------------------
 
 // A single emitted line, tagged by whether it originates from a `raw` node's
@@ -245,7 +260,8 @@ function emitStatement(node: WorkflowNode, names: Map<string, string>, defaultMo
       const d = node.data as AgentData;
       const bind = names.get(node.id)!;
       const opts = agentOpts({ schema: d.schema, label: d.label, model: d.model ?? defaultModel, extraOpts: d.extraOpts }, names);
-      const call = opts ? `agent(\`${renderPrompt(d.prompt, names)}\`, ${opts})` : `agent(\`${renderPrompt(d.prompt, names)}\`)`;
+      const arg = promptArg(d.promptExpr, d.prompt, names);
+      const call = opts ? `agent(${arg}, ${opts})` : `agent(${arg})`;
       return [plain(`const ${bind} = await ${call}`)];
     }
     case 'pipeline': {
@@ -253,9 +269,8 @@ function emitStatement(node: WorkflowNode, names: Map<string, string>, defaultMo
       const bind = names.get(node.id)!;
       const sourceExpr = pipelineSource(d.source, d.sourceField, names);
       const itemOpts = agentOpts({ schema: d.itemSchema, label: d.itemLabel, model: d.model ?? defaultModel, extraOpts: d.extraOpts }, names, { item: 'item' });
-      const inner = itemOpts
-        ? `agent(\`${renderPrompt(d.itemPrompt, names, { item: 'item' })}\`, ${itemOpts})`
-        : `agent(\`${renderPrompt(d.itemPrompt, names, { item: 'item' })}\`)`;
+      const arg = promptArg(d.itemPromptExpr, d.itemPrompt, names, { item: 'item' });
+      const inner = itemOpts ? `agent(${arg}, ${itemOpts})` : `agent(${arg})`;
       return [plain(`const ${bind} = await pipeline(${sourceExpr}, item => ${inner})`)];
     }
     case 'parallel': {
@@ -264,9 +279,8 @@ function emitStatement(node: WorkflowNode, names: Map<string, string>, defaultMo
       const v = d.itemVar; // the .map param name, verbatim
       const sourceExpr = pipelineSource(d.source, d.sourceField, names);
       const itemOpts = agentOpts({ schema: d.itemSchema, label: d.itemLabel, model: d.model ?? defaultModel, extraOpts: d.extraOpts }, names, { [v]: v });
-      const inner = itemOpts
-        ? `agent(\`${renderPrompt(d.itemPrompt, names, { [v]: v })}\`, ${itemOpts})`
-        : `agent(\`${renderPrompt(d.itemPrompt, names, { [v]: v })}\`)`;
+      const arg = promptArg(d.itemPromptExpr, d.itemPrompt, names, { [v]: v });
+      const inner = itemOpts ? `agent(${arg}, ${itemOpts})` : `agent(${arg})`;
       // parallel(SOURCE.map(<v> => () => agent(...)))  — the corpus's dominant shape.
       return [plain(`const ${bind} = await parallel(${sourceExpr}.map(${v} => () => ${inner}))`)];
     }

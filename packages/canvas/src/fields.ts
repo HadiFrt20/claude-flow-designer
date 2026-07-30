@@ -45,6 +45,7 @@ export const FIELD_DESCRIPTORS: Record<NodeKind, FieldDescriptor[]> = {
   ],
   agent: [
     { key: 'prompt', label: 'Prompt', type: 'textarea', group: 'Basic', hint: 'Refs: {{args}}, {{nodeId}}, {{nodeId.field}}.' },
+    { key: 'promptExpr', label: 'Prompt (JS expression)', type: 'code', group: 'Basic', hint: 'A programmatic prompt (e.g. researchPrompt(d)) — imported verbatim, emitted as-is.' },
     { key: 'label', label: 'Agent label', type: 'text', group: 'Basic', hint: 'opts.label — shown in the runtime feed.' },
     { key: 'schema', label: 'Output schema', type: 'json', group: 'Advanced', hint: 'JSON Schema for structured output (opts.schema).' },
     MODEL,
@@ -53,6 +54,7 @@ export const FIELD_DESCRIPTORS: Record<NodeKind, FieldDescriptor[]> = {
     { key: 'source', label: 'Items source', type: 'resultRef', group: 'Basic', hint: 'Producing node id, or "args" to fan out over the input.' },
     { key: 'sourceField', label: 'List field', type: 'fieldPath', group: 'Basic', hint: 'Which array field of the source result; omit if the source IS the array.' },
     { key: 'itemPrompt', label: 'Per-item prompt', type: 'textarea', group: 'Basic', hint: 'Use {{item}} for the current element; upstream refs allowed.' },
+    { key: 'itemPromptExpr', label: 'Per-item prompt (JS expression)', type: 'code', group: 'Basic', hint: 'A programmatic per-item prompt — imported verbatim, emitted as-is.' },
     { key: 'itemLabel', label: 'Per-item label', type: 'text', group: 'Advanced', placeholder: '{{item}}', hint: 'opts.label per fan-out agent.' },
     { key: 'itemSchema', label: 'Per-item schema', type: 'json', group: 'Advanced', hint: 'JSON Schema for each item agent.' },
     MODEL,
@@ -62,6 +64,7 @@ export const FIELD_DESCRIPTORS: Record<NodeKind, FieldDescriptor[]> = {
     { key: 'sourceField', label: 'List field', type: 'fieldPath', group: 'Basic', hint: 'Which array field of the source; omit if the source IS the array.' },
     { key: 'itemVar', label: 'Item variable', type: 'text', group: 'Basic', placeholder: 'item', hint: 'The .map parameter name; use {{<it>}} in the prompt/label.' },
     { key: 'itemPrompt', label: 'Per-item prompt', type: 'textarea', group: 'Basic', hint: 'Use {{<itemVar>}} for the current element; upstream refs allowed.' },
+    { key: 'itemPromptExpr', label: 'Per-item prompt (JS expression)', type: 'code', group: 'Basic', hint: 'A programmatic per-item prompt — imported verbatim, emitted as-is.' },
     { key: 'itemLabel', label: 'Per-item label', type: 'text', group: 'Advanced', hint: 'opts.label per concurrent agent.' },
     { key: 'itemSchema', label: 'Per-item schema', type: 'json', group: 'Advanced' },
     MODEL,

@@ -48,9 +48,18 @@ export const workflowMetaDataSchema = z.object({
  */
 const extraOptsSchema = z.record(z.string(), z.string());
 
-/** One `agent(prompt, opts)` call → one `const` binding. */
+/**
+ * One `agent(prompt, opts)` call → one `const` binding.
+ *
+ * The prompt is EITHER a template (`prompt`, with {{refs}} → `${…}`) OR a verbatim
+ * JS expression (`promptExpr`, emitted as-is). Real workflows often build prompts
+ * programmatically — `agent(researchPrompt(d), …)` — and the visualizer types those
+ * as agent nodes via `promptExpr` rather than dropping them to raw. Exactly one of
+ * the two is set (the parser picks; codegen prefers `promptExpr`).
+ */
 export const agentDataSchema = z.object({
-  prompt: z.string(), // template: may contain {{nodeId}} / {{nodeId.field}} / {{args}}
+  prompt: z.string().optional(), // template: may contain {{nodeId}} / {{nodeId.field}} / {{args}}
+  promptExpr: z.string().optional(), // verbatim JS prompt expression (e.g. `researchPrompt(d)`)
   schema: jsonSchemaShape.optional(), // → opts.schema (structured output)
   label: z.string().optional(), // → opts.label
   model: z.string().optional(), // → opts.model (per-stage routing)
@@ -61,7 +70,8 @@ export const agentDataSchema = z.object({
 export const pipelineDataSchema = z.object({
   source: resultRefSchema, // producing node id (or 'args')
   sourceField: fieldPathSchema.optional(), // which list field of that result; omit when source is itself the array
-  itemPrompt: z.string(), // per-item prompt; may contain {{item}} + upstream refs
+  itemPrompt: z.string().optional(), // per-item template prompt; may contain {{item}} + upstream refs
+  itemPromptExpr: z.string().optional(), // OR a verbatim JS prompt expression
   itemLabel: z.string().optional(), // per-item opts.label; may contain {{item}}
   itemSchema: jsonSchemaShape.optional(),
   model: z.string().optional(),
@@ -78,7 +88,8 @@ export const parallelDataSchema = z.object({
   source: resultRefSchema, // the mapped array: a node id, 'args', or a raw-declared binding
   sourceField: fieldPathSchema.optional(),
   itemVar: z.string().default('item'), // the .map param name (verbatim)
-  itemPrompt: z.string(), // per-item prompt; may contain {{<itemVar>}} + upstream refs
+  itemPrompt: z.string().optional(), // per-item template prompt; may contain {{<itemVar>}}
+  itemPromptExpr: z.string().optional(), // OR a verbatim JS prompt expression
   itemLabel: z.string().optional(),
   itemSchema: jsonSchemaShape.optional(),
   model: z.string().optional(),

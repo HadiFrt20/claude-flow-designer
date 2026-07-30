@@ -29,6 +29,22 @@ function labelFor(binding: string | undefined, kind: string): string {
 }
 
 /**
+ * The prompt field for an agent call: a `{prompt}` when the argument is a template
+ * literal whose interpolations all reconstruct to {{refs}}, otherwise a verbatim
+ * `{promptExpr}` (any other expression — a function call like `researchPrompt(d)`,
+ * a concatenation, etc.). This is what lets programmatic prompts type as agent nodes
+ * (visualization-first) instead of dropping the whole call to raw. Both round-trip:
+ * a template re-renders its refs, an expr is emitted as-is. Returns null only if the
+ * argument is missing.
+ */
+function promptField(arg: Node | undefined, src: string, refs: Refs): { prompt: string } | { promptExpr: string } | null {
+  if (!arg) return null;
+  const tmpl = templateToPrompt(arg, src, refs);
+  if (tmpl !== null) return { prompt: tmpl };
+  return { promptExpr: src.slice(arg.start, arg.end) };
+}
+
+/**
  * A template literal → a prompt string with `${expr}` turned back into a `{{ref}}`
  * template ref, when every interpolation is a shape codegen emits:
  *   ${JSON.stringify(args)}      → {{args}}
@@ -41,6 +57,10 @@ function templateToPrompt(node: Node | undefined, src: string, refs: Refs): stri
   if (!node || node.type !== 'TemplateLiteral') return null;
   const quasis = node.quasis as { value: { cooked: string } }[];
   const exprs = node.expressions as Node[];
+  // If the author's own literal text contains `{{`, our {{ref}} scheme would
+  // ambiguously re-parse it — refuse to templatize (caller keeps it as promptExpr,
+  // verbatim). Avoids inventing a fragile escape and guarantees round-trip fidelity.
+  if (quasis.some((q) => q.value.cooked.includes('{{'))) return null;
   let out = quasis[0]?.value.cooked ?? '';
   for (let i = 0; i < exprs.length; i++) {
     const ref = interpolationToRef(exprs[i]!, refs);
@@ -395,12 +415,12 @@ function tryTypedCall(
   const args = call.arguments as Node[];
 
   if (name === 'agent') {
-    const prompt = templateToPrompt(args[0] as Node, src, refs);
-    if (prompt === null) return null;
+    const pf = promptField(args[0] as Node | undefined, src, refs);
+    if (pf === null) return null;
     const opts = parseAgentOpts(args[1] as Node | undefined, src, refs);
     if (opts === null) return null;
     const data: AgentData = {
-      prompt,
+      ...pf,
       ...(opts.schema ? { schema: opts.schema } : {}),
       ...(opts.label !== undefined ? { label: opts.label } : {}),
       ...(opts.model ? { model: opts.model } : {}),
@@ -416,7 +436,7 @@ function tryTypedCall(
     const data: PipelineData = {
       source: p.source,
       ...(p.sourceField ? { sourceField: p.sourceField } : {}),
-      itemPrompt: p.itemPrompt,
+      ...itemPromptFields(p.prompt),
       ...(p.opts.label !== undefined ? { itemLabel: p.opts.label } : {}),
       ...(p.opts.schema ? { itemSchema: p.opts.schema } : {}),
       ...(p.opts.model ? { model: p.opts.model } : {}),
@@ -443,7 +463,7 @@ function tryTypedCall(
       source: p.source,
       ...(p.sourceField ? { sourceField: p.sourceField } : {}),
       itemVar: p.itemVar,
-      itemPrompt: p.itemPrompt,
+      ...itemPromptFields(p.prompt),
       ...(p.opts.label !== undefined ? { itemLabel: p.opts.label } : {}),
       ...(p.opts.schema ? { itemSchema: p.opts.schema } : {}),
       ...(p.opts.model ? { model: p.opts.model } : {}),
@@ -453,6 +473,11 @@ function tryTypedCall(
   }
 
   return null;
+}
+
+/** Map a promptField result to the pipeline/parallel item* field names. */
+function itemPromptFields(pf: { prompt: string } | { promptExpr: string }): { itemPrompt: string } | { itemPromptExpr: string } {
+  return 'prompt' in pf ? { itemPrompt: pf.prompt } : { itemPromptExpr: pf.promptExpr };
 }
 
 /**
@@ -466,7 +491,7 @@ function parseMappedAgent(
   src: string,
   refs: Refs,
   thunk: boolean,
-): { source: string; sourceField?: string; itemVar: string; itemPrompt: string; opts: ParsedOpts } | null {
+): { source: string; sourceField?: string; itemVar: string; prompt: { prompt: string } | { promptExpr: string }; opts: ParsedOpts } | null {
   if (!fn || (fn.type !== 'ArrowFunctionExpression' && fn.type !== 'FunctionExpression')) return null;
   const params = as<{ params: Node[] }>(fn).params;
   if (params.length !== 1 || params[0]!.type !== 'Identifier') return null;
@@ -487,11 +512,11 @@ function parseMappedAgent(
   if (src0 === null) return null;
   // The map param is a per-item BARE local (emitter writes `${itemVar}`).
   const itemRefs: Refs = { bare: new Set(refs.bare).add(itemVar), node: refs.node };
-  const itemPrompt = templateToPrompt((innerCall.arguments as Node[])[0] as Node, src, itemRefs);
-  if (itemPrompt === null) return null;
+  const prompt = promptField((innerCall.arguments as Node[])[0] as Node | undefined, src, itemRefs);
+  if (prompt === null) return null;
   const opts = parseAgentOpts((innerCall.arguments as Node[])[1] as Node | undefined, src, itemRefs);
   if (opts === null) return null;
-  return { source: src0.source, sourceField: src0.sourceField, itemVar, itemPrompt, opts };
+  return { source: src0.source, sourceField: src0.sourceField, itemVar, prompt, opts };
 }
 
 /** pipeline items expr → {source, sourceField?}: `args`, `bind`, `bind.field`, `args.field`. */

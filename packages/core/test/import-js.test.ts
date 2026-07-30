@@ -96,6 +96,52 @@ describe('parseWorkflowJs — parallel() (M8)', () => {
     expect(a!.data.extraOpts).toEqual({ phase: "'Synthesize'", effort: "'high'" });
     expect(jsOf(generate(g))).toBe(s); // byte-identical
   });
+
+  it('types a FUNCTION-CALL prompt as an agent via promptExpr (visualization-first)', () => {
+    // agent(researchPrompt(d), …) can't be a template — it becomes an agent node
+    // whose prompt is the verbatim expression, re-emitted as-is (round-trip).
+    const g0 = {
+      version: 1 as const, meta: { name: 'x', slug: 'x' }, settings: {},
+      nodes: [
+        { id: 'meta', kind: 'workflow.meta' as const, label: 'x', position: { x: 0, y: 0 }, data: { name: 'x', description: 'd' } },
+        { id: 'r', kind: 'raw' as const, label: 'code', position: { x: 0, y: 0 }, data: { code: 'const build = t => `do ${t}`', produces: ['build'] } },
+        { id: 'a', kind: 'agent' as const, label: 'step', position: { x: 0, y: 0 }, data: { promptExpr: 'build("x")', label: 'go' } },
+        { id: 'ret', kind: 'output.return' as const, label: 'ret', position: { x: 0, y: 0 }, data: { source: 'a', transform: 'none' as const } },
+      ],
+      edges: [{ id: 'e1', source: 'meta', target: 'r' }, { id: 'e2', source: 'r', target: 'a' }, { id: 'e3', source: 'a', target: 'ret' }],
+    };
+    const s = jsOf(generate(g0));
+    // emitted agent must use the bare expression (no backticks around it).
+    expect(s).toContain('agent(build("x"), {');
+    const g = parseWorkflowJs(s, 'x')!;
+    const a = g.nodes.find((n) => n.kind === 'agent');
+    expect(a, 'function-call-prompt agent fell to raw').toBeDefined();
+    if (a!.kind !== 'agent') throw new Error('kind');
+    expect(a!.data.promptExpr).toBe('build("x")');
+    expect(a!.data.prompt).toBeUndefined();
+    expect(jsOf(generate(g))).toBe(s); // round-trips byte-identical
+  });
+
+  it("keeps a prompt containing literal {{...}} as promptExpr (no ambiguous re-parse)", () => {
+    // A template whose OWN text has `{{x}}` can't round-trip through our ref scheme,
+    // so it stays a verbatim promptExpr rather than being mis-read as a ref.
+    const g0 = {
+      version: 1 as const, meta: { name: 'x', slug: 'x' }, settings: {},
+      nodes: [
+        { id: 'meta', kind: 'workflow.meta' as const, label: 'x', position: { x: 0, y: 0 }, data: { name: 'x', description: 'd' } },
+        { id: 'a', kind: 'agent' as const, label: 'a', position: { x: 0, y: 0 }, data: { promptExpr: '`use {{x.y}} literally`' } },
+        { id: 'ret', kind: 'output.return' as const, label: 'ret', position: { x: 0, y: 0 }, data: { source: 'a', transform: 'none' as const } },
+      ],
+      edges: [{ id: 'e1', source: 'meta', target: 'a' }, { id: 'e2', source: 'a', target: 'ret' }],
+    };
+    const s = jsOf(generate(g0));
+    const g = parseWorkflowJs(s, 'x')!;
+    const a = g.nodes.find((n) => n.kind === 'agent');
+    if (a!.kind !== 'agent') throw new Error('kind');
+    expect(a!.data.promptExpr).toBe('`use {{x.y}} literally`'); // stayed verbatim, not a ref
+    expect(a!.data.prompt).toBeUndefined();
+    expect(jsOf(generate(g))).toBe(s); // byte-identical; no CF605 misfire
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -133,8 +179,17 @@ describe('parseWorkflowJs — real hand-authored workflow (ironclad)', () => {
   it('carries raw-declared bindings in produces (across the per-statement raw nodes)', () => {
     const g = parseWorkflowJs(src, 'ironclad')!;
     const produced = g.nodes.flatMap((n) => (n.kind === 'raw' ? (n.data.produces ?? []) : []));
+    // Setup consts (schemas etc.) stay raw and are declared there.
     expect(produced).toContain('results');
-    expect(produced).toContain('final');
+    expect(produced).toContain('FINDINGS_SCHEMA');
+  });
+
+  it('types the synthesis chain (programmatic prompts) as agent nodes, not raw (M8)', () => {
+    const g = parseWorkflowJs(src, 'ironclad')!;
+    const agentLabels = g.nodes.filter((n) => n.kind === 'agent').map((n) => n.label);
+    // draft/critique/final are agent() calls the visualizer now types (via promptExpr
+    // or template), instead of dropping them into raw code blocks.
+    expect(agentLabels).toEqual(expect.arrayContaining(['draft', 'critique', 'final']));
   });
 
   it('splits the body into MANY per-statement blocks, not one blob (M8)', () => {
