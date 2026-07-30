@@ -56,13 +56,14 @@ interpolations against binding names:
 | `{{item}}` | (inside `pipeline`) the current item |
 | `{{check}}` | (inside `loopUntilCheck` fixPrompt) the checker's result |
 
-### The seven kinds
+### The eight kinds
 
 | kind | data | compiles to |
 |---|---|---|
 | `workflow.meta` | name, description, argsHint? | `export const meta = { name, description }` (unique root) |
-| `agent` | prompt, schema? (JSON-Schema object), label?, model? | `const <bind> = await agent(`…`, { schema?, label?, model? })` |
-| `pipeline` | source (resultRef), sourceField? (list field), itemPrompt, itemLabel?, itemSchema?, model? | `const <bind> = await pipeline(<sourceExpr>, item => agent(`…`, { label?, schema?, model? }))` |
+| `agent` | prompt, schema? (JSON-Schema object), label?, model?, extraOpts? | `const <bind> = await agent(`…`, { schema?, label?, model?, …extraOpts })` |
+| `pipeline` | source (resultRef), sourceField? (list field), itemPrompt, itemLabel?, itemSchema?, model?, extraOpts? | `const <bind> = await pipeline(<sourceExpr>, item => agent(`…`, { … }))` |
+| `parallel` | source (resultRef), sourceField?, itemVar='item', itemPrompt, itemLabel?, itemSchema?, model?, extraOpts? | `const <bind> = await parallel(<sourceExpr>.map(<itemVar> => () => agent(`…`, { … })))` |
 | `branch` | source (resultRef), field (fieldPath), negate? | `if (<cond>) { …then arm… } else { …else arm… }` — two outgoing edges tagged `sourceHandle: "then"` / `"else"` |
 | `loopUntilCheck` | checkPrompt, checkSchema?, passField='passed', fixPrompt, maxRounds=2, checkModel?, fixModel? | a bounded `while` loop (check → break on pass / no-progress → fix → repeat) |
 | `output.return` | source (resultRef), field?, transform: 'none'\|'filterBoolean'\|'flatten' | `return <expr>;` (sink; last statement; exactly one) |
@@ -70,8 +71,14 @@ interpolations against binding names:
 
 Notes:
 - `workflow.meta` is the sole entry point (like a single primary trigger). Exactly one per graph.
-- `agent` / `pipeline` / `loopUntilCheck` each produce exactly one `const` binding. `branch` and
-  `output.return` produce no binding.
+- `agent` / `pipeline` / `parallel` / `loopUntilCheck` each produce exactly one `const` binding.
+  `branch` and `output.return` produce no binding.
+- `parallel` (M8) is the corpus's dominant concurrency primitive — `parallel(ARRAY.map(v => () =>
+  agent(...)))`, one agent per item run concurrently. It preserves the `.map` param name (`itemVar`,
+  not always `item`) so it round-trips exactly. Same list-source rules as `pipeline` (CF607).
+- `extraOpts` (M8) is a passthrough map of undocumented-but-real agent opts (`phase`, `effort`,
+  `agentType`, …) whose values are verbatim JS source, emitted after the modeled opts. It lets a real
+  hand-authored `agent(prompt, { label, phase, effort })` type instead of falling to `raw`.
 - `raw` (M7) is the **import escape hatch**: top-level statements the JS→graph importer can't model
   as typed nodes (schema consts, helper functions, `for` loops, `Promise.all`, complex returns) are
   preserved verbatim in a `raw` node. `produces` lists the bindings it declares so downstream typed
