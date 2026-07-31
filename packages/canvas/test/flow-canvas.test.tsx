@@ -31,6 +31,22 @@ describe('FlowCanvas', () => {
     expect(container.querySelector('.react-flow__handle.source')).toBeNull();
   });
 
+  it('renders a parallel node as a fan-out with a concurrency label over its source', () => {
+    const store = new EditorStore();
+    store.addNode({ id: 'list', kind: 'agent', label: 'List', position: { x: 0, y: 0 }, data: { prompt: 'list', schema: { type: 'object', properties: { dims: { type: 'array' } } } } });
+    store.addNode({ id: 'rev', kind: 'parallel', label: 'Review each', position: { x: 0, y: 0 }, data: { source: 'list', sourceField: 'dims', itemVar: 'd', itemPrompt: 'Review {{d}}.' } });
+    render(<FlowCanvas store={store} />);
+    // The concurrency badge names it as concurrent AND shows the honest source it maps over.
+    expect(screen.getByText(/concurrent · one agent × list\.dims/)).toBeInTheDocument();
+  });
+
+  it('renders a pipeline node as a fan-out labelled sequential-per-item', () => {
+    const store = new EditorStore();
+    store.addNode({ id: 'grade', kind: 'pipeline', label: 'Grade', position: { x: 0, y: 0 }, data: { source: 'args', itemPrompt: 'Grade {{item}}.' } });
+    render(<FlowCanvas store={store} />);
+    expect(screen.getByText(/sequential · one agent × args/)).toBeInTheDocument();
+  });
+
   it('shows a diagnostic badge on a node with an error', () => {
     const store = new EditorStore();
     // agent prompt references an unknown node → CF605 error on the node.

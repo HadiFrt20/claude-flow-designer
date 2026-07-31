@@ -61,6 +61,79 @@ function CFNode({ data }: { data: NodeData }) {
   );
 }
 
+/**
+ * The array a fan-out maps over, as a short honest label: `args`, a node id, plus an
+ * optional `.field`. The concurrency WIDTH is dynamic (`SOURCE.map(...)` at runtime),
+ * so we show what it fans over (`× list.dims`), never a fake fixed count.
+ */
+function fanOutSourceLabel(node: WorkflowNode): string {
+  if (node.kind !== 'parallel' && node.kind !== 'pipeline') return '';
+  const base = node.data.source === 'args' || !node.data.source ? 'args' : node.data.source;
+  return node.data.sourceField ? `${base}.${node.data.sourceField}` : base;
+}
+
+/**
+ * A parallel/pipeline node renders as a visible FAN-OUT (M10): the main card plus an
+ * internal diagram of one source dot forking into concurrent item-agent lanes, so a
+ * step that is really "N agents at once" looks wide instead of like one sequential
+ * box. This is PURELY a rendering of the single graph node — no extra graph nodes or
+ * edges exist, so codegen/round-trip/validation are untouched.
+ */
+function FanOutNode({ data }: { data: NodeData }) {
+  const { node, worst } = data;
+  const cat = categoryOf(node.kind); // 'pipeline' accent for both fan-out kinds
+  const accent = ACCENT[cat];
+  const dotStyle = { width: 8, height: 8, background: accent, border: 'none' };
+  const src = fanOutSourceLabel(node);
+  const concurrent = node.kind === 'parallel'; // pipeline is sequential-per-item; parallel is concurrent
+  // Three lanes convey "many"; the third is an ellipsis chip so we never imply a
+  // fixed count. Geometry for the little SVG fork.
+  const laneYs = [16, 34, 52];
+  return (
+    <div
+      style={{
+        minWidth: 180, borderRadius: '4px', border: `1px solid ${TOKENS.border}`,
+        borderLeft: `2px solid ${accent}`, background: TOKENS.surfaceRaised, color: TOKENS.text,
+        fontFamily: TOKENS.uiFont, padding: SPACE(2), position: 'relative',
+      }}
+    >
+      <Handle type="target" position={Position.Left} style={dotStyle} />
+      {worst && (
+        <span
+          aria-label={worst === 'error' ? 'has errors' : 'has warnings'}
+          style={{ position: 'absolute', top: -8, right: -8, color: SEVERITY_COLOR[worst], background: TOKENS.surface, borderRadius: '50%', fontSize: '0.75em', padding: '0 3px' }}
+        >
+          {SEVERITY_ICON[worst]}
+        </span>
+      )}
+      <div style={{ fontFamily: TOKENS.monoFont, fontSize: '0.72em', color: TOKENS.textMuted }}>
+        <span aria-hidden>{CATEGORY_GLYPH[cat]}</span> {node.kind}
+      </div>
+      <div style={{ fontWeight: 600 }}>{node.label || '(unnamed)'}</div>
+      {/* concurrency badge — the honest "this is N at once, over <source>" signal */}
+      <div style={{ fontSize: '0.68em', color: accent, marginTop: SPACE(1), fontFamily: TOKENS.monoFont }}>
+        {concurrent ? '⇉ concurrent' : '→ sequential'} · one agent × {src}
+      </div>
+      {/* fan diagram: a source dot forking into concurrent item-agent lanes */}
+      <svg width="100%" height="64" style={{ marginTop: SPACE(1), overflow: 'visible' }} aria-hidden>
+        {laneYs.map((y, i) => (
+          <path key={i} d={`M 6 6 C 40 6, 40 ${y}, 74 ${y}`} stroke={accent} strokeWidth={1} fill="none" opacity={0.6} />
+        ))}
+        <circle cx={6} cy={6} r={3} fill={accent} />
+        {laneYs.map((y, i) => (
+          <g key={i}>
+            <rect x={74} y={y - 8} width={72} height={16} rx={2} fill={TOKENS.surface} stroke={accent} strokeWidth={0.75} opacity={i === 2 ? 0.5 : 1} />
+            <text x={80} y={y + 4} fontSize={9} fill={TOKENS.textMuted} fontFamily={TOKENS.monoFont}>
+              {i === 2 ? '… × items' : `agent ${node.kind === 'parallel' ? node.data.itemVar ?? 'item' : 'item'}`}
+            </text>
+          </g>
+        ))}
+      </svg>
+      <Handle type="source" position={Position.Right} style={dotStyle} />
+    </div>
+  );
+}
+
 // A phase renders as a titled GROUP container (M9): a translucent box sized to
 // enclose its member nodes (which React Flow positions inside via parentId). The
 // title bar names the phase; members are drawn as normal CFNodes on top.
@@ -88,7 +161,14 @@ function PhaseGroupNode({ data }: { data: NodeData }) {
   );
 }
 
-const nodeTypes = { cf: CFNode, phaseGroup: PhaseGroupNode };
+const nodeTypes = { cf: CFNode, phaseGroup: PhaseGroupNode, fanOut: FanOutNode };
+
+/** The React Flow node-type name for a workflow node kind. */
+function rfTypeOf(kind: WorkflowNode['kind']): 'cf' | 'phaseGroup' | 'fanOut' {
+  if (kind === 'phase') return 'phaseGroup';
+  if (kind === 'parallel' || kind === 'pipeline') return 'fanOut';
+  return 'cf';
+}
 
 export function FlowCanvas({ store }: { store: EditorStore }) {
   const state = useEditor(store);
@@ -116,7 +196,10 @@ export function FlowCanvas({ store }: { store: EditorStore }) {
   // both rfNodes (rendering) and onNodesChange (converting a child drag back to
   // absolute) — no ref mutation during render (a React correctness smell).
   const boxes = useMemo(() => {
-    const PAD = 24; const TITLE_H = 28; const NODE_W = 180; const NODE_H = 64;
+    // NODE_W/NODE_H reserve room for the widest+tallest member so the container
+    // encloses it. A fan-out member (parallel/pipeline) carries an internal fan
+    // diagram, so it's taller than a plain node — size for that.
+    const PAD = 24; const TITLE_H = 28; const NODE_W = 220; const NODE_H = 150;
     const membersOf = new Map<string, typeof state.graph.nodes>();
     for (const n of state.graph.nodes) {
       if (n.parentId) (membersOf.get(n.parentId) ?? membersOf.set(n.parentId, []).get(n.parentId)!).push(n);
@@ -153,7 +236,7 @@ export function FlowCanvas({ store }: { store: EditorStore }) {
       if (n.kind === 'phase') continue;
       const b = n.parentId ? box.get(n.parentId) : undefined;
       out.push({
-        id: n.id, type: 'cf',
+        id: n.id, type: rfTypeOf(n.kind),
         position: b ? { x: n.position.x - b.x, y: n.position.y - b.y } : n.position,
         ...(n.parentId && b ? { parentId: n.parentId, extent: 'parent' as const } : {}),
         selected: n.id === state.selectedNodeId,
