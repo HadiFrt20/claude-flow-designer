@@ -68,6 +68,33 @@ function armHasDirectReturn(node: Node): boolean {
   return blockBody(node).some((s) => s.type === 'ReturnStatement');
 }
 
+/** The leading-whitespace width of the source line a statement starts on. */
+function statementIndent(source: string, start: number): number {
+  const lineStart = source.lastIndexOf('\n', start - 1) + 1;
+  const line = source.slice(lineStart, start);
+  return /^\s*$/.test(line) ? line.length : 0; // 0 if the statement isn't at line start
+}
+
+/**
+ * Dedent every line after the first by up to `indent` columns, so a multi-line raw
+ * block captured inside a source-indented arm is stored at a column-0 baseline. The
+ * first line already excludes its own indent (the slice starts at the statement), so
+ * only continuation lines carry the absolute indent that must be removed. Idempotent:
+ * a block already at baseline (indent 0 / no leading space) is unchanged.
+ */
+function dedentContinuation(code: string, indent: number): string {
+  if (indent <= 0) return code;
+  const lines = code.split('\n');
+  return lines
+    .map((l, i) => {
+      if (i === 0) return l;
+      let strip = 0;
+      while (strip < indent && strip < l.length && l[strip] === ' ') strip++;
+      return l.slice(strip);
+    })
+    .join('\n');
+}
+
 /** camelCase-ish → a readable label; falls back to the id. */
 function labelFor(binding: string | undefined, kind: string): string {
   if (!binding) return kind;
@@ -376,7 +403,13 @@ export function parseWorkflowJs(source: string, slug = 'imported'): WorkflowGrap
   // statement consumed.
   let cursor = 0;
   const rawNode = (stmt: Node, parentId: string | undefined, topLevel: boolean): string => {
-    const own = source.slice(stmt.start, stmt.end);
+    let own = source.slice(stmt.start, stmt.end);
+    // Arm-nested raw (structural view): normalize continuation-line indent to a
+    // column-0-relative baseline by dedenting each by the statement's own indent.
+    // Otherwise emitBranch's uniform +2 indent would compound every round-trip and
+    // never reach a fixpoint (the arm raw's continuation lines keep their absolute
+    // source indent). Scoped to !topLevel so top-level raw stays byte-identical.
+    if (!topLevel) own = dedentContinuation(own, statementIndent(source, stmt.start));
     const lead = topLevel ? source.slice(cursor, stmt.start).trim() : '';
     const code = lead ? `${lead}\n${own}` : own;
     const names = declaredNames(stmt);

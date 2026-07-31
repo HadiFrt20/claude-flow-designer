@@ -505,6 +505,30 @@ describe('parseWorkflowJs — branch from a real if (M9)', () => {
     const twice = jsOf(generate(parseWorkflowJs(once, 'fp')!));
     expect(twice).toBe(once); // fixpoint: re-import/re-export is stable
   });
+
+  it('a MULTI-LINE raw statement inside a branch arm reaches a fixpoint (no indent creep)', () => {
+    // Regression: an arm-nested raw block keeps its source indent on continuation
+    // lines; emitBranch adds +2 per line, so without dedent-on-capture the indent
+    // grew every round and never converged (found in the biorce corpus workflow).
+    const src = [
+      'export const meta = { name: "fp2", description: "d" }',
+      'const r = await agent(`check`)',
+      'if (r.failing) {',
+      '  const fix = await agent(',
+      '    `line one',
+      '     line two`,',
+      "    { label: 'x' }",
+      '  )',
+      '}',
+      'return r',
+      '',
+    ].join('\n');
+    const once = jsOf(generate(parseWorkflowJs(src, 'fp2')!));
+    const twice = jsOf(generate(parseWorkflowJs(once, 'fp2')!));
+    const thrice = jsOf(generate(parseWorkflowJs(twice, 'fp2')!));
+    expect(twice).toBe(once);
+    expect(thrice).toBe(twice); // stable across repeated round-trips
+  });
 });
 
 // ---------------------------------------------------------------------------
