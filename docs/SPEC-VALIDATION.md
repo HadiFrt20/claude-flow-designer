@@ -52,7 +52,7 @@ still generic graph checks) and **CF6xx** workflow-script rules. RuleIds are sta
 |---|---|---|---|
 | CF601 | error | No `workflow.meta` node, or more than one | insert / delete extras |
 | CF602 | error | `workflow.meta.name` empty or not a valid `/command` slug | derive from graph.slug |
-| CF604 | error | `agent`/`pipeline`/`parallel`/`loopUntilCheck` template prompt is empty | — |
+| CF604 | error | `agent`/`pipeline`/`parallel`/`loopUntilCheck` template prompt is empty (or neither prompt nor promptExpr set) | — |
 | CF605 | error | Template ref `{{nodeId}}`/`{{nodeId.field}}` targets a node that doesn't exist, isn't upstream, or produces no binding | — |
 | CF606 | error | Zero or more than one `output.return`, or a node exists downstream of the return | — |
 | CF607 | error | `pipeline`/`parallel` source is not a list (missing `sourceField`, or field's JSON-Schema `type` ≠ array) | add / point `sourceField` |
@@ -64,8 +64,13 @@ still generic graph checks) and **CF6xx** workflow-script rules. RuleIds are sta
 | CF614 | warn | `pipeline`/`parallel` fan-out with no `itemLabel` (harder to read the runtime feed) | generate label |
 | CF615 | info | Downstream `.field` ref on an `agent` with no `schema` (structured output recommended) | add schema |
 | CF616 | info | Graph contains a `raw` node — imported code kept verbatim (not modeled as typed nodes) | — |
+| CF617 | error | `phase` node with an empty `title` | — |
+| CF618 | error | `parentId` references a node that doesn't exist or isn't a `phase` | detach from parent |
+| CF619 | info | `branch` uses a verbatim `condExpr` (structural view — best-effort re-export, not byte-identical) | — |
 
 > CF007 (dup slug) is retired — a graph is one workflow; the meta.name↔slug concern is CF611.
+> CF619 mirrors CF616's spirit for `branch`-from-`if`: it flags that the region re-exports in canonical
+> form (fixpoint round-trip), not byte-identically to the author's source.
 
 ## Quick-fix framework
 

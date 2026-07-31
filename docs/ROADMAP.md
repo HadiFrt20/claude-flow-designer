@@ -77,6 +77,20 @@
 - [x] Grounded in a 73-workflow corpus: typed coverage 5→88, 0 hard errors; code-reviewer
       APPROVE after 3 rounds (B1–B10); 356 tests; lint clean; fixtures drift-clean.
 
+## M9 — Structural view (phases as groups, real branches surfaced)
+- [ ] `phase` group node kind + `parentId` containment on the node base; NODE_KINDS drift-pin.
+- [ ] Parser: `phase('X')` → titled group wrapping subsequent members; recurse into `if`
+      consequent/alternate + arrow/callback blocks to surface nested `branch` when they gate an
+      agent/pipeline/parallel; pure data-munging `if`/`for` stays `raw`.
+- [ ] `branch.condExpr`: verbatim JS condition (mirrors M8 promptExpr) so a real `if (failing.length)`
+      types as a branch, self-lint-exempt; structured `{source,field,negate}` stays the authoring path.
+- [ ] Codegen: emit `phase(<title>)` before group members + parsed branches; `phase` added to
+      self-lint GLOBALS; byte-identical for phase groups + all M6–M8 fixtures.
+- [ ] Validation CF617/618/619 (+ matrix parity, 24 rules) — phase title, parentId target, condExpr info.
+- [ ] Canvas: `phase` palette/fields + render as titled group container nesting its children.
+- [ ] Corpus re-run: phase groups > 0 and branch nodes > 0 across 73 workflows (was 0/0), 0 hard
+      errors; round-trip fixpoint holds; code-reviewer APPROVE.
+
 ## M5 — Sharing & polish
 - [ ] Plugin-bundle export target.
 - [ ] Effort×model advisor (warnings + docs links).

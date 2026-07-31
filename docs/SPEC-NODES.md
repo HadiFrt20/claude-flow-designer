@@ -33,7 +33,14 @@ disagree.
 
 ## Node union (discriminated on `kind`)
 
-Every node: `{ id, kind, label, position: {x,y}, data: <per-kind> }`.
+Every node: `{ id, kind, label, position: {x,y}, parentId?, data: <per-kind> }`.
+
+`parentId` (M9) is an optional containment pointer: when set, it is the id of a `phase` node that
+visually and structurally CONTAINS this node. It is orthogonal to `edges` (which carry execution
+order) — a member of a phase is still wired into the linear/branch edge flow; `parentId` only groups
+it under a titled container on the canvas and emits a `phase('…')` marker before the group's members.
+Only a `phase` node may be a parent; phases do not nest inside phases (single level — matches the
+corpus, where `phase()` markers are flat).
 
 A workflow graph is a **DAG** rooted at the single `workflow.meta` node. Edges express data +
 execution-order dependencies (`A → B` = "B runs after A and may consume A's result"). The DAG
@@ -56,15 +63,16 @@ interpolations against binding names:
 | `{{item}}` | (inside `pipeline`) the current item |
 | `{{check}}` | (inside `loopUntilCheck` fixPrompt) the checker's result |
 
-### The eight kinds
+### The nine kinds
 
 | kind | data | compiles to |
 |---|---|---|
 | `workflow.meta` | name, description, argsHint? | `export const meta = { name, description }` (unique root) |
+| `phase` | title | `phase(<title>)` marker; groups the nodes whose `parentId` is this node (M9) |
 | `agent` | prompt, schema? (JSON-Schema object), label?, model?, extraOpts? | `const <bind> = await agent(`…`, { schema?, label?, model?, …extraOpts })` |
 | `pipeline` | source (resultRef), sourceField? (list field), itemPrompt, itemLabel?, itemSchema?, model?, extraOpts? | `const <bind> = await pipeline(<sourceExpr>, item => agent(`…`, { … }))` |
 | `parallel` | source (resultRef), sourceField?, itemVar='item', itemPrompt, itemLabel?, itemSchema?, model?, extraOpts? | `const <bind> = await parallel(<sourceExpr>.map(<itemVar> => () => agent(`…`, { … })))` |
-| `branch` | source (resultRef), field (fieldPath), negate? | `if (<cond>) { …then arm… } else { …else arm… }` — two outgoing edges tagged `sourceHandle: "then"` / `"else"` |
+| `branch` | source (resultRef), field (fieldPath), negate? — OR verbatim `condExpr` | `if (<cond>) { …then arm… } else { …else arm… }` — two outgoing edges tagged `sourceHandle: "then"` / `"else"` |
 | `loopUntilCheck` | checkPrompt, checkSchema?, passField='passed', fixPrompt, maxRounds=2, checkModel?, fixModel? | a bounded `while` loop (check → break on pass / no-progress → fix → repeat) |
 | `output.return` | source (resultRef), field?, transform: 'none'\|'filterBoolean'\|'flatten' | `return <expr>;` (sink; last statement; exactly one) |
 | `raw` | code (verbatim JS), produces? (binding names it declares) | the `code`, emitted UNCHANGED at its topo position |
@@ -72,7 +80,17 @@ interpolations against binding names:
 Notes:
 - `workflow.meta` is the sole entry point (like a single primary trigger). Exactly one per graph.
 - `agent` / `pipeline` / `parallel` / `loopUntilCheck` each produce exactly one `const` binding.
-  `branch` and `output.return` produce no binding.
+  `branch`, `phase`, and `output.return` produce no binding.
+- `phase` (M9) models the corpus's dominant structuring primitive (`phase('X')`, 176 uses): a bare
+  runtime marker that names the following block of work. It emits a `phase(<title>)` statement before
+  its members (the nodes with `parentId === this.id`, in topo order) and renders as a titled group
+  container. `phase` produces no binding and takes no result ref. Phases are flat (no nesting).
+- `branch.condExpr` (M9) is the verbatim-condition escape hatch, mirroring M8's `agent.promptExpr`: a
+  real imported `if (failing.length)` / `if (!findings)` types as a `branch` with `condExpr` set to the
+  verbatim JS condition (emitted as-is, self-lint-exempt) rather than dropping the whole `if` to `raw`.
+  Exactly one of `{source, field}` (structured) or `condExpr` (verbatim) is set; codegen prefers
+  `condExpr`. Only `if` blocks that GATE orchestration (contain an agent/pipeline/parallel/phase) become
+  branches; pure data-munging `if`/`for`/`while` stay `raw`.
 - `parallel` (M8) is the corpus's dominant concurrency primitive — `parallel(ARRAY.map(v => () =>
   agent(...)))`, one agent per item run concurrently. It preserves the `.map` param name (`itemVar`,
   not always `item`) so it round-trips exactly. Same list-source rules as `pipeline` (CF607).
@@ -118,9 +136,19 @@ VS Code implements it with `postMessage` ↔ extension host; writes go to
 
 ### Round-trip
 
-The emitted `.js` is **one-way output**. The `<slug>.clauflow.json` sidecar is the single
-round-trip source of truth: `parseProject(generate(g))` reads the sidecar back to `g` (deep-equal
-modulo positions). Codegen does NOT parse `.js` → graph (it's a full language; lossy).
+Import parses a real `.claude/workflows/<name>.js` INTO an editable graph (M7); the sidecar is a
+derived projection, not the source of truth. The round-trip contract has three levels (M9 states them
+explicitly; earlier milestones only ever guaranteed level 2 for gallery fixtures):
+
+1. **Graph round-trip** — `parse(emit(g))` deep-equals `g` (modulo node positions). The property test
+   for every kind, including `phase` groups and `branch`-from-`if`.
+2. **Source byte-identity (canonical scripts)** — `emit(parse(src)) === src` for scripts the emitter
+   produced (the gallery fixtures + a phase-grouped fixture). NOT claimed for arbitrary hand-authored
+   source (never was): the emitter re-formats in its canonical style.
+3. **Real-workflow fidelity (fixpoint)** — for an arbitrary imported workflow, `emit(parse(src))` is
+   valid + self-lint-passing and **idempotent** (`emit(parse(emit(parse(src)))) === emit(parse(src))`).
+   Structured regions (`branch` from a hand-authored `if`) re-emit in canonical form; re-import/re-export
+   reaches a fixpoint after one round.
 
 ## VS Code extension surface (packages/vscode)
 
