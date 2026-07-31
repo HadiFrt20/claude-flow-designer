@@ -5,10 +5,11 @@
 import type { NodeKind } from '@clauflow/core';
 
 /** The visual categories a workflow node kind maps to. */
-export type NodeCategory = 'meta' | 'agent' | 'pipeline' | 'control' | 'raw';
+export type NodeCategory = 'meta' | 'phase' | 'agent' | 'pipeline' | 'control' | 'raw';
 
 export function categoryOf(kind: NodeKind): NodeCategory {
   if (kind === 'workflow.meta') return 'meta';
+  if (kind === 'phase') return 'phase'; // titled group container (M9)
   if (kind === 'agent') return 'agent';
   if (kind === 'pipeline' || kind === 'parallel') return 'pipeline'; // both fan out
   if (kind === 'raw') return 'raw';
@@ -19,6 +20,7 @@ export function categoryOf(kind: NodeKind): NodeCategory {
 /** `/command`-style prefix glyph per category (node headers read like a config file). */
 export const CATEGORY_GLYPH: Record<NodeCategory, string> = {
   meta: '▸',
+  phase: '▤',
   agent: '·',
   pipeline: '❖',
   control: '◆',
@@ -29,6 +31,7 @@ export const CATEGORY_GLYPH: Record<NodeCategory, string> = {
 // override per-theme; these are the web-app dark-first fallbacks.
 export const ACCENT: Record<NodeCategory, string> = {
   meta: 'var(--cf-accent-meta, #d7a65f)', // amber
+  phase: 'var(--cf-accent-phase, #6a9955)', // green — grouping/structure
   agent: 'var(--cf-accent-agent, #4ec9d4)', // cyan
   pipeline: 'var(--cf-accent-pipeline, #b48ead)', // violet
   control: 'var(--cf-accent-control, #d16969)', // red

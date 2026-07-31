@@ -43,6 +43,9 @@ export const FIELD_DESCRIPTORS: Record<NodeKind, FieldDescriptor[]> = {
     { key: 'description', label: 'Description', type: 'textarea', group: 'Basic', hint: 'export const meta.description — shown when the workflow is listed.' },
     { key: 'argsHint', label: 'Args hint', type: 'text', group: 'Advanced', placeholder: 'an array of PR numbers', hint: 'Doc-only: what `args` is at invocation.' },
   ],
+  phase: [
+    { key: 'title', label: 'Phase title', type: 'text', group: 'Basic', hint: 'Names a block of work; emits phase("…"). Nodes placed inside are its members.' },
+  ],
   agent: [
     { key: 'prompt', label: 'Prompt', type: 'textarea', group: 'Basic', hint: 'Refs: {{args}}, {{nodeId}}, {{nodeId.field}}.' },
     { key: 'promptExpr', label: 'Prompt (JS expression)', type: 'code', group: 'Basic', hint: 'A programmatic prompt (e.g. researchPrompt(d)) — imported verbatim, emitted as-is.' },
@@ -70,7 +73,8 @@ export const FIELD_DESCRIPTORS: Record<NodeKind, FieldDescriptor[]> = {
     MODEL,
   ],
   branch: [
-    { key: 'source', label: 'Test result of', type: 'resultRef', group: 'Basic', hint: 'Node id whose result is tested.' },
+    { key: 'condExpr', label: 'Condition (JS expression)', type: 'code', group: 'Basic', hint: 'A verbatim imported if-condition (e.g. failing.length) — emitted as-is. Leave blank to use the structured fields below.' },
+    { key: 'source', label: 'Test result of', type: 'resultRef', group: 'Basic', hint: 'Node id whose result is tested (structured form; ignored if a JS condition is set).' },
     { key: 'field', label: 'Boolean field', type: 'fieldPath', group: 'Basic', hint: 'Boolean-ish field on that result.' },
     { key: 'negate', label: 'Negate condition', type: 'boolean', group: 'Advanced', hint: 'Take the "then" arm when the field is falsy.' },
   ],
@@ -104,6 +108,7 @@ export const PALETTE: { group: string; entries: PaletteEntry[] }[] = [
     group: 'Entry',
     entries: [
       { kind: 'workflow.meta', label: 'Workflow (meta)' },
+      { kind: 'phase', label: 'Phase (group)' },
     ],
   },
   {
@@ -130,6 +135,8 @@ export function defaultData(kind: NodeKind): Record<string, unknown> {
   switch (kind) {
     case 'workflow.meta':
       return { name: 'workflow', description: '' };
+    case 'phase':
+      return { title: 'Phase' };
     case 'agent':
       return { prompt: '' };
     case 'pipeline':

@@ -1,7 +1,7 @@
 // React Flow canvas. Mirrors the store's WorkflowGraph into React Flow nodes/
 // edges, rejects incompatible connections up front (edgeAllowed — same rule as
 // CF005), and renders each node with its category accent + diagnostic badge.
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import {
   ReactFlow,
   Background,
@@ -23,6 +23,8 @@ import { ACCENT, CATEGORY_GLYPH, categoryOf, TOKENS, SPACE, SEVERITY_ICON, SEVER
 interface NodeData extends Record<string, unknown> {
   node: WorkflowNode;
   worst?: 'error' | 'warn';
+  width?: number;  // phase group: measured container size
+  height?: number;
 }
 
 function CFNode({ data }: { data: NodeData }) {
@@ -59,7 +61,34 @@ function CFNode({ data }: { data: NodeData }) {
   );
 }
 
-const nodeTypes = { cf: CFNode };
+// A phase renders as a titled GROUP container (M9): a translucent box sized to
+// enclose its member nodes (which React Flow positions inside via parentId). The
+// title bar names the phase; members are drawn as normal CFNodes on top.
+function PhaseGroupNode({ data }: { data: NodeData }) {
+  const { node, width, height } = data;
+  const accent = ACCENT.phase;
+  return (
+    <div
+      style={{
+        width: width ?? 240, height: height ?? 120,
+        borderRadius: '6px', border: `1px dashed ${accent}`,
+        background: 'color-mix(in srgb, var(--cf-accent-phase, #6a9955) 7%, transparent)',
+        fontFamily: TOKENS.uiFont, position: 'relative',
+      }}
+    >
+      <Handle type="target" position={Position.Left} style={{ width: 8, height: 8, background: accent, border: 'none' }} />
+      <div style={{ position: 'absolute', top: SPACE(1), left: SPACE(2), fontSize: '0.72em', color: accent, fontFamily: TOKENS.monoFont }}>
+        <span aria-hidden>{CATEGORY_GLYPH.phase}</span> phase
+      </div>
+      <div style={{ position: 'absolute', top: SPACE(1), left: 0, right: 0, textAlign: 'center', fontWeight: 600, color: TOKENS.text }}>
+        {node.kind === 'phase' ? node.data.title || '(untitled phase)' : ''}
+      </div>
+      <Handle type="source" position={Position.Right} style={{ width: 8, height: 8, background: accent, border: 'none' }} />
+    </div>
+  );
+}
+
+const nodeTypes = { cf: CFNode, phaseGroup: PhaseGroupNode };
 
 export function FlowCanvas({ store }: { store: EditorStore }) {
   const state = useEditor(store);
@@ -75,17 +104,65 @@ export function FlowCanvas({ store }: { store: EditorStore }) {
     return m;
   }, [diags]);
 
-  const rfNodes: RFNode<NodeData>[] = useMemo(
-    () =>
-      state.graph.nodes.map((n) => ({
-        id: n.id,
-        type: 'cf',
-        position: n.position,
+  // Origin (top-left absolute position) of each phase container, so a child drag —
+  // which React Flow reports relative to the parent — can be converted back to the
+  // absolute coordinate the store holds. Populated while building rfNodes.
+  const boxOrigin = useRef(new Map<string, { x: number; y: number }>());
+  const parentOf = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const n of state.graph.nodes) if (n.parentId) m.set(n.id, n.parentId);
+    return m;
+  }, [state.graph.nodes]);
+
+  const rfNodes: RFNode<NodeData>[] = useMemo(() => {
+    const nodes = state.graph.nodes;
+    const origins = new Map<string, { x: number; y: number }>();
+    // Members grouped by their phase parent, so each phase renders as a container
+    // box sized to enclose its members (React Flow parent/child: parent listed first,
+    // child positions relative to the parent, parent given an explicit size).
+    const PAD = 24; const TITLE_H = 28; const NODE_W = 180; const NODE_H = 64;
+    const membersOf = new Map<string, typeof nodes>();
+    for (const n of nodes) {
+      if (n.parentId) (membersOf.get(n.parentId) ?? membersOf.set(n.parentId, []).get(n.parentId)!).push(n);
+    }
+    // Container geometry per phase: bounding box of its members' absolute positions.
+    const box = new Map<string, { x: number; y: number; w: number; h: number }>();
+    for (const [pid, members] of membersOf) {
+      const xs = members.map((m) => m.position.x);
+      const ys = members.map((m) => m.position.y);
+      const minX = Math.min(...xs); const minY = Math.min(...ys);
+      const maxX = Math.max(...xs); const maxY = Math.max(...ys);
+      box.set(pid, { x: minX - PAD, y: minY - TITLE_H - PAD, w: (maxX - minX) + NODE_W + PAD * 2, h: (maxY - minY) + NODE_H + TITLE_H + PAD * 2 });
+      origins.set(pid, { x: minX - PAD, y: minY - TITLE_H - PAD });
+    }
+    boxOrigin.current = origins;
+    const out: RFNode<NodeData>[] = [];
+    // Phase containers first (React Flow requires parents before children).
+    for (const n of nodes) {
+      if (n.kind !== 'phase') continue;
+      const b = box.get(n.id);
+      out.push({
+        id: n.id, type: 'phaseGroup',
+        position: b ? { x: b.x, y: b.y } : n.position,
+        selected: n.id === state.selectedNodeId,
+        data: { node: n, worst: worstByNode.get(n.id), width: b?.w, height: b?.h },
+        style: { width: b?.w, height: b?.h },
+      });
+    }
+    // Then the rest; a phase member is positioned relative to its container.
+    for (const n of nodes) {
+      if (n.kind === 'phase') continue;
+      const b = n.parentId ? box.get(n.parentId) : undefined;
+      out.push({
+        id: n.id, type: 'cf',
+        position: b ? { x: n.position.x - b.x, y: n.position.y - b.y } : n.position,
+        ...(n.parentId && b ? { parentId: n.parentId, extent: 'parent' as const } : {}),
         selected: n.id === state.selectedNodeId,
         data: { node: n, worst: worstByNode.get(n.id) },
-      })),
-    [state.graph.nodes, state.selectedNodeId, worstByNode],
-  );
+      });
+    }
+    return out;
+  }, [state.graph.nodes, state.selectedNodeId, worstByNode]);
 
   const rfEdges: RFEdge[] = useMemo(
     () => state.graph.edges.map((e) => ({ id: e.id, source: e.source, target: e.target, label: e.label })),
@@ -115,7 +192,12 @@ export function FlowCanvas({ store }: { store: EditorStore }) {
       // Persist position changes back to the store; ignore RF-internal churn.
       for (const ch of changes) {
         if (ch.type === 'position' && ch.position && !ch.dragging) {
-          store.moveNode(ch.id, ch.position);
+          // A phase member's position is reported relative to its container; the
+          // store holds absolute coordinates, so add back the container origin.
+          const pid = parentOf.get(ch.id);
+          const origin = pid ? boxOrigin.current.get(pid) : undefined;
+          const abs = origin ? { x: ch.position.x + origin.x, y: ch.position.y + origin.y } : ch.position;
+          store.moveNode(ch.id, abs);
         } else if (ch.type === 'select' && ch.selected) {
           store.select(ch.id);
         } else if (ch.type === 'remove') {

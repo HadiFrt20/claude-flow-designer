@@ -64,6 +64,24 @@ export function applyLayout(graph: WorkflowGraph): WorkflowGraph {
     });
   }
 
+  // M9: cluster phase members inside their phase's container. The layered layout
+  // above spreads members across columns by depth; that would make a phase's
+  // bounding box overlap sibling phases. Re-place each phase's members in a compact
+  // block offset to the right of and below the phase node, stacked in topo order, so
+  // the container box (derived from member positions in FlowCanvas) stays tight.
+  const MEMBER_DX = 40; // inset of members from the phase's x
+  const MEMBER_DY = 56; // first member below the phase title
+  const byParent = new Map<string, string[]>();
+  for (const n of graph.nodes) if (n.parentId) (byParent.get(n.parentId) ?? byParent.set(n.parentId, []).get(n.parentId)!).push(n.id);
+  for (const [pid, members] of byParent) {
+    const base = pos.get(pid);
+    if (!base) continue;
+    members.sort((a, b) => (rank.get(a) ?? 0) - (rank.get(b) ?? 0));
+    members.forEach((id, i) => {
+      pos.set(id, { x: base.x + MEMBER_DX, y: base.y + MEMBER_DY + i * ROW_H });
+    });
+  }
+
   return {
     ...graph,
     nodes: graph.nodes.map((n) => ({ ...n, position: pos.get(n.id) ?? n.position })),
