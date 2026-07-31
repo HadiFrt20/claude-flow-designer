@@ -58,7 +58,9 @@ function structuredRefsOf(node: WorkflowNode): { field: string; id: string }[] {
   switch (node.kind) {
     case 'pipeline': return [{ field: 'source', id: node.data.source }];
     case 'parallel': return [{ field: 'source', id: node.data.source }];
-    case 'branch': return [{ field: 'source', id: node.data.source }];
+    // A branch with a verbatim condExpr has no structured node-id ref (its
+    // identifiers are opaque user code); only the structured form contributes one.
+    case 'branch': return node.data.source !== undefined ? [{ field: 'source', id: node.data.source }] : [];
     case 'output.return': return [{ field: 'source', id: node.data.source }];
     default: return [];
   }
@@ -320,8 +322,14 @@ const cf608: Rule = {
       const out = graph.edges.filter((e) => e.source === b.id);
       const then = out.filter((e) => e.sourceHandle === 'then').length;
       const els = out.filter((e) => e.sourceHandle === 'else').length;
-      if (then !== 1 || els !== 1) {
-        diags.push({ ruleId: 'CF608', severity: 'error', nodeId: b.id, message: `branch needs exactly one "then" and one "else" outgoing edge (has then=${then}, else=${els}).`, docsUrl: DOCS_URLS.workflows });
+      // A structured branch needs both arms (it authors an if/else). A verbatim
+      // condExpr branch (imported `if`) may be else-less — codegen emits `if (c) {…}`
+      // with no else clause when there is no else edge — so only `then` is required.
+      const elseRequired = b.data.condExpr === undefined;
+      const ok = then === 1 && (elseRequired ? els === 1 : els <= 1);
+      if (!ok) {
+        const want = elseRequired ? 'exactly one "then" and one "else"' : 'exactly one "then" (and at most one "else")';
+        diags.push({ ruleId: 'CF608', severity: 'error', nodeId: b.id, message: `branch needs ${want} outgoing edge (has then=${then}, else=${els}).`, docsUrl: DOCS_URLS.workflows });
       }
     }
     return diags;
@@ -527,6 +535,58 @@ const cf616: Rule = {
   },
 };
 
+const cf617: Rule = {
+  id: 'CF617',
+  severity: 'error',
+  run(graph) {
+    return nodesOfKind(graph, 'phase')
+      .filter((n) => !n.data.title.trim())
+      .map((n): Diagnostic => ({
+        ruleId: 'CF617', severity: 'error', nodeId: n.id, field: 'title',
+        message: 'phase has an empty title.', docsUrl: DOCS_URLS.workflows,
+      }));
+  },
+};
+
+const cf618: Rule = {
+  id: 'CF618',
+  severity: 'error',
+  run(graph) {
+    const byId = new Map(graph.nodes.map((n) => [n.id, n]));
+    const diags: Diagnostic[] = [];
+    for (const n of graph.nodes) {
+      if (n.parentId === undefined) continue;
+      const parent = byId.get(n.parentId);
+      if (!parent || parent.kind !== 'phase') {
+        diags.push({
+          ruleId: 'CF618', severity: 'error', nodeId: n.id,
+          message: parent
+            ? `parentId references "${n.parentId}" (${parent.kind}), which is not a phase.`
+            : `parentId references unknown node "${n.parentId}".`,
+          docsUrl: DOCS_URLS.workflows,
+          quickFix: { title: 'Detach from parent', apply: (g) => ({ ...g, nodes: g.nodes.map((m) => (m.id === n.id ? { ...m, parentId: undefined } : m)) }) },
+        });
+      }
+    }
+    return diags;
+  },
+};
+
+const cf619: Rule = {
+  id: 'CF619',
+  severity: 'info',
+  run(graph) {
+    return nodesOfKind(graph, 'branch')
+      .filter((n) => n.data.condExpr !== undefined)
+      .map((n): Diagnostic => ({
+        ruleId: 'CF619', severity: 'info', nodeId: n.id,
+        message: 'Branch condition is a verbatim expression (structural view) — re-exported in canonical form, not byte-identically to the original source.',
+        docsUrl: DOCS_URLS.workflows,
+      }));
+  },
+};
+
 export const workflowRules: Rule[] = [
   cf601, cf602, cf604, cf605, cf606, cf607, cf608, cf609, cf610, cf611, cf613, cf614, cf615, cf616,
+  cf617, cf618, cf619,
 ];

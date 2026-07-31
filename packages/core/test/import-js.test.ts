@@ -280,12 +280,13 @@ describe('parseWorkflowJs — round-trip fidelity', () => {
   it('B4: two identical raw blocks are both exempt (no SelfLintError)', () => {
     // A repeated un-typed line (e.g. a progress marker) produces two identical raw
     // nodes. Emitter records each block's exact span, so BOTH are exempt — the
-    // second no longer falls to the strict check and crash generate().
+    // second no longer falls to the strict check and crash generate(). `log()` is an
+    // undocumented runtime global (not allowlisted, not typed) → stays raw.
     const src = [
       "export const meta = { name: 'analyze', description: 'd' }",
-      "phase('start')", // runtime global, not allowlisted → must be exempt
+      "log('start')", // runtime global, not allowlisted → must be exempt
       'const a = await agent(`step 1`)',
-      "phase('start')", // identical raw line → a second raw node
+      "log('start')", // identical raw line → a second raw node
       'const b = await agent(`step 2`)',
       'return b',
       '',
@@ -293,7 +294,7 @@ describe('parseWorkflowJs — round-trip fidelity', () => {
     const g = parseWorkflowJs(src, 'analyze')!;
     expect(g.nodes.filter((n) => n.kind === 'raw')).toHaveLength(2);
     const out = jsOf(generate(g)); // must not throw
-    expect((out.match(/phase\('start'\)/g) ?? []).length).toBe(2);
+    expect((out.match(/log\('start'\)/g) ?? []).length).toBe(2);
   });
 });
 
@@ -393,6 +394,116 @@ describe('parseWorkflowJs — M8 review regressions', () => {
     } as never;
     expect(validateGraph(g0).some((d) => d.ruleId === 'CF604')).toBe(true);
     expect(() => generate(g0)).toThrow(); // export gate blocks the empty prompt
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M9: structural view — phase() groups + branch-from-if.
+// ---------------------------------------------------------------------------
+describe('parseWorkflowJs — phase groups (M9)', () => {
+  // meta + two phases each wrapping one agent, then a return. Built from a graph so
+  // the source is canonical emitter output (byte-identity is a fair claim).
+  const phaseGraph = {
+    version: 1 as const, meta: { name: 'poc', slug: 'poc' }, settings: {},
+    nodes: [
+      { id: 'm', kind: 'workflow.meta' as const, label: 'poc', position: { x: 0, y: 0 }, data: { name: 'poc', description: 'd' } },
+      { id: 'p1', kind: 'phase' as const, label: 'understand', position: { x: 0, y: 0 }, data: { title: 'Understand' } },
+      { id: 'a1', kind: 'agent' as const, label: 'spec', position: { x: 0, y: 0 }, parentId: 'p1', data: { prompt: 'Write a spec.' } },
+      { id: 'p2', kind: 'phase' as const, label: 'build', position: { x: 0, y: 0 }, data: { title: 'Build' } },
+      { id: 'a2', kind: 'agent' as const, label: 'build', position: { x: 0, y: 0 }, parentId: 'p2', data: { prompt: 'Build from {{a1}}.' } },
+      { id: 'ret', kind: 'output.return' as const, label: 'ret', position: { x: 0, y: 0 }, data: { source: 'a2', transform: 'none' as const } },
+    ],
+    edges: [
+      { id: 'e1', source: 'm', target: 'p1' }, { id: 'e2', source: 'p1', target: 'a1' },
+      { id: 'e3', source: 'a1', target: 'p2' }, { id: 'e4', source: 'p2', target: 'a2' },
+      { id: 'e5', source: 'a2', target: 'ret' },
+    ],
+  };
+  const src = jsOf(generate(phaseGraph));
+
+  it('emits phase() markers that hug their first member', () => {
+    expect(src).toContain('phase("Understand")\nconst spec');
+    expect(src).toContain('phase("Build")\nconst build');
+  });
+
+  it('parses phase() markers into phase nodes with members parented to them', () => {
+    const g = parseWorkflowJs(src, 'poc')!;
+    const phases = g.nodes.filter((n) => n.kind === 'phase');
+    expect(phases.map((p) => (p.kind === 'phase' ? p.data.title : ''))).toEqual(['Understand', 'Build']);
+    const spec = g.nodes.find((n) => n.kind === 'agent' && n.label.includes('spec'));
+    // the agent after phase('Understand') is parented to that phase node
+    expect(spec?.parentId).toBe(phases[0]!.id);
+  });
+
+  it('round-trips a phase-grouped workflow byte-identical', () => {
+    expect(jsOf(generate(parseWorkflowJs(src, 'poc')!))).toBe(src);
+  });
+});
+
+describe('parseWorkflowJs — branch from a real if (M9)', () => {
+  it('reconstructs an if that gates an agent as a branch with a verbatim condExpr', () => {
+    const src = [
+      'export const meta = { name: "verify", description: "d" }',
+      'const verdicts = await agent(`check`)',
+      'if (verdicts.failing) {',
+      '  const repair = await agent(`fix ${JSON.stringify(verdicts)}`)',
+      '}',
+      'return verdicts',
+      '',
+    ].join('\n');
+    const g = parseWorkflowJs(src, 'verify')!;
+    const br = g.nodes.find((n) => n.kind === 'branch');
+    expect(br, 'no branch node').toBeDefined();
+    if (br!.kind !== 'branch') throw new Error('kind');
+    expect(br!.data.condExpr).toBe('verdicts.failing'); // verbatim condition
+    // the repair agent is on the `then` arm
+    const thenEdge = g.edges.find((e) => e.source === br!.id && e.sourceHandle === 'then');
+    expect(thenEdge).toBeDefined();
+    expect(() => generate(g)).not.toThrow(); // valid + self-lint-passing
+  });
+
+  it('keeps a pure data-munging if as raw (no orchestration to gate)', () => {
+    const src = [
+      'export const meta = { name: "reduce", description: "d" }',
+      'const data = await agent(`get`)',
+      'if (data.items.length > 3) { data.trimmed = true }',
+      'return data',
+      '',
+    ].join('\n');
+    const g = parseWorkflowJs(src, 'reduce')!;
+    expect(g.nodes.some((n) => n.kind === 'branch')).toBe(false);
+    expect(g.nodes.some((n) => n.kind === 'raw')).toBe(true);
+  });
+
+  it('keeps an if whose arm has a direct return as raw (would double the return)', () => {
+    const src = [
+      'export const meta = { name: "guard", description: "d" }',
+      'const r = await agent(`check`)',
+      'if (!r.ok) { const x = await agent(`log`); return x }',
+      'return r',
+      '',
+    ].join('\n');
+    const g = parseWorkflowJs(src, 'guard')!;
+    // Not lifted to a branch (the arm's `return` would create a second top-level return).
+    expect(g.nodes.some((n) => n.kind === 'branch')).toBe(false);
+  });
+
+  it('a branch parsed from an if reaches a re-emit FIXPOINT after one round', () => {
+    // Tier-3 contract: not byte-identical to hand-authored source, but idempotent.
+    const src = [
+      'export const meta = { name: "fp", description: "d" }',
+      'const r = await agent(`check`)',
+      'if (r.failing) {',
+      '  const fix = await agent(`repair`)',
+      '} else {',
+      '  const ok = await agent(`approve`)',
+      '}',
+      'return r',
+      '',
+    ].join('\n');
+    const once = jsOf(generate(parseWorkflowJs(src, 'fp')!));
+    const twice = jsOf(generate(parseWorkflowJs(once, 'fp')!));
+    expect(twice).toBe(once); // fixpoint: re-import/re-export is stable
   });
 });
 

@@ -39,6 +39,9 @@ export const n = {
   branch: (id: string, data: BranchData, label = id): WorkflowNode => ({
     id, kind: 'branch', label, position: pos, data,
   }),
+  phase: (id: string, data: { title: string }, label = id): WorkflowNode => ({
+    id, kind: 'phase', label, position: pos, data,
+  }),
   loop: (id: string, data: LoopUntilCheckData, label = id): WorkflowNode => ({
     id, kind: 'loopUntilCheck', label, position: pos, data,
   }),
@@ -289,6 +292,40 @@ export const fixtures: Record<RuleId, { hit: WorkflowGraph; miss: WorkflowGraph 
       [n.meta('meta', { name: 't', description: 'd' }),
        n.raw('raw', { code: 'const merged = [].flat()\nreturn merged', produces: ['merged'] }, 'code')],
       [e('meta', 'raw')],
+    ),
+    miss: valid(),
+  },
+  CF617: {
+    // A phase node with an empty title.
+    hit: g(
+      [n.meta('meta', { name: 't', description: 'd' }),
+       n.phase('ph', { title: '   ' }),
+       n.agent('a', { prompt: 'Do it.' }),
+       n.ret('ret', { source: 'a', transform: 'none' })],
+      [e('meta', 'ph'), e('ph', 'a'), e('a', 'ret')],
+    ),
+    miss: valid(),
+  },
+  CF618: {
+    // A node whose parentId points at a non-phase node (the agent, not a phase).
+    hit: g(
+      [n.meta('meta', { name: 't', description: 'd' }),
+       n.agent('a', { prompt: 'Do it.' }),
+       { ...n.agent('b', { prompt: 'And more.' }), parentId: 'a' },
+       n.ret('ret', { source: 'b', transform: 'none' })],
+      [e('meta', 'a'), e('a', 'b'), e('b', 'ret')],
+    ),
+    miss: valid(),
+  },
+  CF619: {
+    // A branch using a verbatim condExpr (structural view — info only).
+    hit: g(
+      [n.meta('meta', { name: 't', description: 'd' }),
+       n.agent('r', { prompt: 'Check.' }),
+       n.branch('br', { condExpr: 'r.failing' }),
+       n.agent('fix', { prompt: 'Repair.' }),
+       n.ret('ret', { source: 'r', transform: 'none' })],
+      [e('meta', 'r'), e('r', 'br'), e('br', 'fix', 'then'), e('br', 'ret')],
     ),
     miss: valid(),
   },

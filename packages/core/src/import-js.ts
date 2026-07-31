@@ -24,6 +24,50 @@ function as<T>(node: unknown): T {
 /** A bare JS identifier (safe to emit unquoted as an object key). */
 const IDENT_RE = /^[A-Za-z_$][\w$]*$/;
 
+// --- M9 structural helpers: phase markers + orchestration-gating branches -----
+
+/** `phase('title')` bare marker → its title (string-literal arg only), else null. */
+function phaseMarker(expr: Node | undefined): string | null {
+  if (!expr || expr.type !== 'CallExpression') return null;
+  const callee = expr.callee as Node;
+  if (callee.type !== 'Identifier' || callee.name !== 'phase') return null;
+  const args = expr.arguments as Node[];
+  if (args.length !== 1) return null;
+  return jsonStringLiteral(args[0] as Node); // null if not a string literal → caller keeps it raw
+}
+
+/** The statement list of a block, or a single statement wrapped as a one-element list. */
+function blockBody(node: Node): Node[] {
+  return node.type === 'BlockStatement' ? (node.body as Node[]) : [node];
+}
+
+/** Does a subtree call orchestration (agent/pipeline/parallel/phase)? (gates if→branch). */
+function containsOrchestration(node: Node): boolean {
+  let found = false;
+  const visit = (n: Node | null | undefined): void => {
+    if (found || !n || typeof n.type !== 'string') return;
+    if (n.type === 'CallExpression') {
+      const callee = n.callee as Node;
+      if (callee?.type === 'Identifier' && ['agent', 'pipeline', 'parallel', 'phase'].includes(callee.name as string)) {
+        found = true; return;
+      }
+    }
+    for (const k of Object.keys(n)) {
+      if (k === 'type' || k === 'start' || k === 'end') continue;
+      const v = (n as Record<string, unknown>)[k];
+      if (Array.isArray(v)) for (const c of v) { if (c && typeof (c as Node).type === 'string') visit(c as Node); }
+      else if (v && typeof (v as Node).type === 'string') visit(v as Node);
+    }
+  };
+  visit(node);
+  return found;
+}
+
+/** True when an arm body has a DIRECT (top-level-of-arm) return — would create a 2nd return. */
+function armHasDirectReturn(node: Node): boolean {
+  return blockBody(node).some((s) => s.type === 'ReturnStatement');
+}
+
 /** camelCase-ish → a readable label; falls back to the id. */
 function labelFor(binding: string | undefined, kind: string): string {
   if (!binding) return kind;
@@ -315,34 +359,139 @@ export function parseWorkflowJs(source: string, slug = 'imported'): WorkflowGrap
     usedIds.add(id);
     return id;
   };
-  const push = (n: WorkflowNode): void => { built.nodes.push(n); built.order.push(n.id); };
-  // M8: ONE node per top-level statement (no merging). An un-typed statement becomes
-  // its own `raw` node spanning [after the previous statement … its own end], with
-  // leading blank lines trimmed — so a comment ABOVE a statement attaches to its node
-  // (M3) without inheriting a blank separator. `cursor` is the byte after the last
-  // statement consumed (typed or raw).
+  const edges: Edge[] = [];
+  const link = (from: string, to: string, handle?: string): void => {
+    edges.push({ id: `${from}->${to}${handle ? `:${handle}` : ''}`, source: from, target: to, ...(handle ? { sourceHandle: handle } : {}) });
+  };
+  // Push a node, optionally under a phase parent (M9). Returns the id.
+  const push = (n: WorkflowNode, parentId?: string): string => {
+    const withParent = parentId ? { ...n, parentId } : n;
+    built.nodes.push(withParent); built.order.push(withParent.id); return withParent.id;
+  };
+  // M8: ONE node per statement (no merging). An un-typed statement becomes its own
+  // `raw` node. At top level (`topLevel`), the raw node's code is prefixed with any
+  // leading trivia (a comment above it) between `cursor` and its start, blank-trimmed,
+  // so a comment travels with its statement (M3). Inside arms (structural view), raw
+  // uses the statement's own span only. `cursor` is the byte after the last top-level
+  // statement consumed.
   let cursor = 0;
-  const emitRaw = (stmt: Node): void => {
-    // Prefix any leading trivia (a comment above the statement) between the previous
-    // statement and this one, with surrounding blank lines trimmed, so the comment
-    // travels with its statement (M3) but no blank separator leaks in.
-    const lead = source.slice(cursor, stmt.start).trim();
+  const rawNode = (stmt: Node, parentId: string | undefined, topLevel: boolean): string => {
     const own = source.slice(stmt.start, stmt.end);
+    const lead = topLevel ? source.slice(cursor, stmt.start).trim() : '';
     const code = lead ? `${lead}\n${own}` : own;
     const names = declaredNames(stmt);
-    // A raw block emitted here is UPSTREAM of every later statement (linear chain),
-    // so a later typed prompt may reference its bindings via a BARE {{name}} —
-    // codegen re-emits `${name}` and CF605 confirms upstream-ness. (Safe, unlike
-    // B1: the binding provably exists upstream.)
+    // A raw block is upstream of later statements at its level, so a later typed
+    // prompt may reference its bindings via a BARE {{name}} (CF605 confirms upstream).
     for (const nm of names) refs.bare.add(nm);
-    push({
+    return push({
       id: freshId('raw'), kind: 'raw', label: 'code', position: POS,
       data: { code, ...(names.length ? { produces: names } : {}) } as RawData,
-    });
+    }, parentId);
   };
 
+  // Parse one statement into a node (typed, branch, or raw) and return its id, or
+  // null when the statement is consumed without producing a node (meta at top level).
+  // `parentId` is the enclosing phase (M9); `topLevel` gates comment capture.
+  const parseStatement = (stmt: Node, parentId: string | undefined, topLevel: boolean): string | null => {
+    // const x = await agent(...) | await pipeline(...) | await parallel(...)
+    if (stmt.type === 'VariableDeclaration') {
+      const decls = stmt.declarations as { id: Node; init?: Node }[];
+      const d = decls.length === 1 ? decls[0] : undefined;
+      const init = d?.init;
+      if (d && d.id.type === 'Identifier' && init?.type === 'AwaitExpression' && (stmt.kind as string) === 'const') {
+        const call = as<{ argument: Node }>(init).argument;
+        const bind = as<{ name: string }>(d.id).name;
+        const typed = tryTypedCall(call, bind, source, refs, freshId);
+        if (typed) { refs.node.add(bind); return push(typed, parentId); }
+      }
+      return rawNode(stmt, parentId, topLevel);
+    }
+    // return <expr>
+    if (stmt.type === 'ReturnStatement') {
+      const ret = tryReturn((stmt as { argument?: Node }).argument, source, freshId);
+      if (ret) return push(ret, parentId);
+      return rawNode(stmt, parentId, topLevel);
+    }
+    // if (…) { … } [else { … }] — reconstruct a branch ONLY when it gates orchestration
+    // (contains an agent/pipeline/parallel/phase). Pure data-munging if → raw (unchanged).
+    if (stmt.type === 'IfStatement') {
+      const b = tryBranch(stmt, parentId);
+      if (b) return b;
+      return rawNode(stmt, parentId, topLevel);
+    }
+    // anything else (while, for, bare expressions, functions) → raw
+    return rawNode(stmt, parentId, topLevel);
+  };
+
+  /**
+   * Reconstruct an `if` as a `branch` with a verbatim `condExpr`, its arms parsed as
+   * `then`/`else` sub-sequences (fan-out edges). Returns the branch node id, or null
+   * to keep the whole `if` as raw when it isn't safe to lift: it must gate
+   * orchestration, and neither arm may carry a DIRECT return (that would produce a
+   * second top-level return — CF606). Arm members share the branch's parentId (phase
+   * containment is by parentId; branch structure is by then/else edges — keeps CF618
+   * "parent must be a phase" true).
+   */
+  function tryBranch(stmt: Node, parentId: string | undefined): string | null {
+    const test = stmt.test as Node;
+    const consequent = stmt.consequent as Node;
+    const alternate = (stmt as { alternate?: Node }).alternate;
+    if (!containsOrchestration(stmt)) return null;
+    if (armHasDirectReturn(consequent) || (alternate && armHasDirectReturn(alternate))) return null;
+    const condExpr = source.slice(test.start, test.end);
+    const bId = push({ id: freshId('branch'), kind: 'branch', label: 'branch', position: POS, data: { condExpr } }, parentId);
+    // then arm (required): link the branch to the arm's head with the `then` handle.
+    const thenSeq = parseSequence(blockBody(consequent), parentId, /*topLevel*/ false);
+    if (thenSeq.headId) link(bId, thenSeq.headId, 'then');
+    // else arm (optional): an else-less if emits `if (cond) { … }` with no else clause,
+    // so we only add an `else` edge when an alternate arm exists (CF608 is relaxed for
+    // condExpr branches to allow a missing else).
+    if (alternate) {
+      const elseSeq = parseSequence(blockBody(alternate), parentId, /*topLevel*/ false);
+      if (elseSeq.headId) link(bId, elseSeq.headId, 'else');
+    }
+    return bId;
+  }
+
+  /**
+   * Parse a run of statements into nodes + edges, returning the sequence's head and
+   * tail node ids for the caller to link. A `phase('X')` marker opens a group: it is
+   * pushed as a phase node (at THIS level's parentId) and becomes the parent of the
+   * following siblings until the next phase. Non-phase items are chained head→tail with
+   * plain edges; a branch's tail is the branch node itself (the join continues from it).
+   */
+  function parseSequence(stmts: Node[], parentId: string | undefined, topLevel: boolean): { headId: string | null; tailId: string | null } {
+    let headId: string | null = null;
+    let prevTail: string | null = null;
+    let curParent = parentId; // parent for non-phase items; a phase marker updates it
+    for (const stmt of stmts) {
+      // phase('title') marker → a group container node; members after it belong to it.
+      if (stmt.type === 'ExpressionStatement') {
+        const title = phaseMarker((stmt as { expression?: Node }).expression);
+        if (title !== null) {
+          const phId = push({ id: freshId('phase'), kind: 'phase', label: labelFor(title.replace(/\s+/g, '-').toLowerCase(), 'phase'), position: POS, data: { title } }, parentId);
+          if (prevTail) link(prevTail, phId);
+          headId ??= phId; prevTail = phId;
+          curParent = phId; // subsequent siblings are members of this phase
+          if (topLevel) cursor = stmt.end;
+          continue;
+        }
+      }
+      const id = parseStatement(stmt, curParent, topLevel);
+      if (topLevel) cursor = stmt.end;
+      if (id === null) continue;
+      // parseStatement pushes the node (and, for a branch, its arm head + internal
+      // edges). Its head/tail for sequential linking is the node id itself.
+      if (prevTail) link(prevTail, id);
+      headId ??= id; prevTail = id;
+    }
+    return { headId, tailId: prevTail };
+  }
+
+  // Top-level pass: pull out `export const meta` (→ the workflow.meta node), parse the
+  // rest as a sequence, then prepend meta and wire it to the sequence head.
+  const rest: Node[] = [];
   for (const stmt of body) {
-    // export const meta = { name, description, ... }
     if (stmt.type === 'ExportNamedDeclaration') {
       const decl = (stmt as { declaration?: Node }).declaration;
       const d0 = decl?.type === 'VariableDeclaration' ? (decl.declarations as { id: Node; init?: Node }[])[0] : undefined;
@@ -361,48 +510,18 @@ export function parseWorkflowJs(source: string, slug = 'imported'): WorkflowGrap
         cursor = stmt.end;
         continue; // meta becomes the workflow.meta node, added first below
       }
-      emitRaw(stmt); cursor = stmt.end;
-      continue;
     }
-
-    // const x = await agent(...) | await pipeline(...) | await parallel(...)
-    if (stmt.type === 'VariableDeclaration') {
-      const decls = stmt.declarations as { id: Node; init?: Node }[];
-      const d = decls.length === 1 ? decls[0] : undefined;
-      const init = d?.init;
-      if (d && d.id.type === 'Identifier' && init?.type === 'AwaitExpression' && (stmt.kind as string) === 'const') {
-        const call = as<{ argument: Node }>(init).argument;
-        const bind = as<{ name: string }>(d.id).name;
-        const typed = tryTypedCall(call, bind, source, refs, freshId);
-        if (typed) { refs.node.add(bind); push(typed); cursor = stmt.end; continue; }
-      }
-      emitRaw(stmt); cursor = stmt.end;
-      continue;
-    }
-
-    // return <expr>
-    if (stmt.type === 'ReturnStatement') {
-      const ret = tryReturn((stmt as { argument?: Node }).argument, source, freshId);
-      if (ret) { push(ret); cursor = stmt.end; continue; }
-      emitRaw(stmt); cursor = stmt.end;
-      continue;
-    }
-
-    // anything else (if/else, while, for, expression statements, functions) → raw
-    emitRaw(stmt); cursor = stmt.end;
+    rest.push(stmt);
   }
 
   if (!sawMeta) return null;
 
-  // Prepend the meta node and wire a linear chain meta → n0 → n1 → … in order.
   const metaId = freshId('meta');
+  const seq = parseSequence(rest, undefined, /*topLevel*/ true);
+  if (seq.headId) link(metaId, seq.headId);
+
   const metaNode: WorkflowNode = { id: metaId, kind: 'workflow.meta', label: labelFor(metaName, 'workflow.meta'), position: POS, data: { name: metaName, description: metaDesc } };
   const nodes = [metaNode, ...built.nodes];
-  const chain = [metaId, ...built.order];
-  const edges: Edge[] = [];
-  for (let i = 0; i + 1 < chain.length; i++) {
-    edges.push({ id: `${chain[i]}->${chain[i + 1]}`, source: chain[i]!, target: chain[i + 1]! });
-  }
 
   // The emitted file is <slug>.js and the command is /<meta.name>, so they must
   // agree (CF611). meta.name is authoritative; derive the slug from it if a valid

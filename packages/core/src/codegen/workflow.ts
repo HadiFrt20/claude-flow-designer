@@ -3,7 +3,7 @@
 import type { GeneratedFile } from '../schema/types.js';
 import type { WorkflowGraph } from '../schema/graph.js';
 import type {
-  WorkflowNode, NodeKind, AgentData, PipelineData, ParallelData, LoopUntilCheckData, ReturnData, BranchData, RawData,
+  WorkflowNode, NodeKind, AgentData, PipelineData, ParallelData, LoopUntilCheckData, ReturnData, BranchData, RawData, PhaseData,
 } from '../schema/nodes.js';
 import { FIELD_PATH_RE } from '../schema/nodes.js';
 import { stableJson } from './json.js';
@@ -122,13 +122,19 @@ function promptArg(
 
 // A single emitted line. `raw` tags a whole line that came from a `raw` node's
 // verbatim code. `exempt` lists verbatim SUBSTRINGS within a typed line (a
-// `promptExpr` — opaque user JS) that self-lint must not resolve. Both feed the
-// exempt byte-spans self-lint uses.
-interface Line { text: string; raw: boolean; exempt?: string[] }
+// `promptExpr` or branch `condExpr` — opaque user JS) that self-lint must not
+// resolve. Each carries the literal `anchor` token that immediately precedes it in
+// the line (`agent(`, `if (`), so the byte span is located exactly even when the
+// same text appears elsewhere on the line (B10). Both feed the exempt byte-spans.
+interface Exempt { anchor: string; frag: string }
+interface Line { text: string; raw: boolean; exempt?: Exempt[] }
 const plain = (text: string): Line => ({ text, raw: false });
-/** A typed line whose verbatim `promptExpr` substring (if any) is self-lint-exempt. */
-const exemptLine = (text: string, promptExpr?: string): Line =>
-  promptExpr !== undefined ? { text, raw: false, exempt: [promptExpr] } : plain(text);
+/**
+ * A typed line whose verbatim substring `frag` (a promptExpr/condExpr, if any) is
+ * self-lint-exempt. `anchor` is the token the frag immediately follows in `text`.
+ */
+const exemptLine = (text: string, anchor: string, frag?: string): Line =>
+  frag !== undefined ? { text, raw: false, exempt: [{ anchor, frag }] } : plain(text);
 
 export function emitWorkflow(graph: WorkflowGraph): GeneratedFile {
   return buildWorkflow(graph).file;
@@ -171,16 +177,16 @@ export function buildWorkflow(graph: WorkflowGraph): { file: GeneratedFile; rawR
     if (line.raw && line.text.length > 0) {
       rawRegions.push({ start, end: content.length });
     } else if (line.exempt) {
-      // Exempt each verbatim promptExpr's byte-span. A promptExpr is always emitted
-      // as the FIRST argument of an `agent(` call, so anchor the search on the token
-      // `agent(<frag>` — not a bare indexOf(frag), which could mis-hit the same text
-      // earlier in the line (e.g. inside the binding name; B10).
-      for (const frag of line.exempt) {
+      // Exempt each verbatim frag's byte-span. A frag (promptExpr/condExpr) is opaque
+      // user JS emitted right after a known token (`agent(`, `if (`), so anchor the
+      // search on `<anchor><frag>` — not a bare indexOf(frag), which could mis-hit the
+      // same text earlier in the line (e.g. inside the binding name; B10).
+      for (const { anchor, frag } of line.exempt) {
         if (!frag) continue;
-        const anchor = line.text.indexOf(`agent(${frag}`);
-        if (anchor >= 0) {
-          const at = anchor + 'agent('.length;
-          rawRegions.push({ start: start + at, end: start + at + frag.length });
+        const at = line.text.indexOf(`${anchor}${frag}`);
+        if (at >= 0) {
+          const start0 = at + anchor.length;
+          rawRegions.push({ start: start + start0, end: start + start0 + frag.length });
         }
       }
     }
@@ -215,9 +221,11 @@ function emitSequence(
     if (nested.has(id)) continue; // emitted inside its enclosing branch arm
     const node = byId.get(id);
     if (!node || node.kind === 'workflow.meta') continue;
-    // One blank line BETWEEN nodes — but none between two consecutive `raw` nodes,
-    // which were contiguous statements in the source (preserves original spacing).
-    if (prevKind !== null && !(prevKind === 'raw' && node.kind === 'raw')) out.push(plain(''));
+    // One blank line BETWEEN nodes, EXCEPT: (a) two consecutive `raw` nodes (contiguous
+    // source statements — preserve original spacing), and (b) right after a `phase`
+    // marker, which hugs its first member so the group reads as a titled block.
+    const contiguous = (prevKind === 'raw' && node.kind === 'raw') || prevKind === 'phase';
+    if (prevKind !== null && !contiguous) out.push(plain(''));
     if (node.kind === 'branch') out.push(...emitBranch(node, names, graph, armMembers, defaultModel));
     else out.push(...emitStatement(node, names, defaultModel));
     prevKind = node.kind;
@@ -273,7 +281,10 @@ function emitBranch(
     emitSequence(ids, names, graph, armMembers, defaultModel)
       .filter((l) => l.text !== '') // no blank lines inside the block
       .map((l) => ({ text: '  ' + l.text, raw: l.raw, ...(l.exempt ? { exempt: l.exempt } : {}) }));
-  const out: Line[] = [plain(`if (${cond}) {`), ...arm(arms.then)];
+  // A verbatim condExpr is opaque user code — exempt its span (anchored on `if (`,
+  // exactly as agent/parallel exempt promptExpr after `agent(`).
+  const ifLine = exemptLine(`if (${cond}) {`, 'if (', node.data.condExpr);
+  const out: Line[] = [ifLine, ...arm(arms.then)];
   if (arms.else.length) out.push(plain('} else {'), ...arm(arms.else));
   out.push(plain('}')); // inter-node blank is added by emitSequence
   return out;
@@ -285,13 +296,18 @@ function emitBranch(
  */
 function emitStatement(node: WorkflowNode, names: Map<string, string>, defaultModel?: string): Line[] {
   switch (node.kind) {
+    case 'phase': {
+      // A bare `phase('title')` marker (M9). Groups the following members visually;
+      // for codegen it is just a statement. Byte-identical round-trip.
+      return [plain(`phase(${JSON.stringify((node.data as PhaseData).title)})`)];
+    }
     case 'agent': {
       const d = node.data as AgentData;
       const bind = names.get(node.id)!;
       const opts = agentOpts({ schema: d.schema, label: d.label, model: d.model ?? defaultModel, extraOpts: d.extraOpts }, names);
       const arg = promptArg(d.promptExpr, d.prompt, names);
       const call = opts ? `agent(${arg}, ${opts})` : `agent(${arg})`;
-      return [exemptLine(`const ${bind} = await ${call}`, d.promptExpr)];
+      return [exemptLine(`const ${bind} = await ${call}`, 'agent(', d.promptExpr)];
     }
     case 'pipeline': {
       const d = node.data as PipelineData;
@@ -300,7 +316,7 @@ function emitStatement(node: WorkflowNode, names: Map<string, string>, defaultMo
       const itemOpts = agentOpts({ schema: d.itemSchema, label: d.itemLabel, model: d.model ?? defaultModel, extraOpts: d.extraOpts }, names, { item: 'item' });
       const arg = promptArg(d.itemPromptExpr, d.itemPrompt, names, { item: 'item' });
       const inner = itemOpts ? `agent(${arg}, ${itemOpts})` : `agent(${arg})`;
-      return [exemptLine(`const ${bind} = await pipeline(${sourceExpr}, item => ${inner})`, d.itemPromptExpr)];
+      return [exemptLine(`const ${bind} = await pipeline(${sourceExpr}, item => ${inner})`, 'agent(', d.itemPromptExpr)];
     }
     case 'parallel': {
       const d = node.data as ParallelData;
@@ -311,7 +327,7 @@ function emitStatement(node: WorkflowNode, names: Map<string, string>, defaultMo
       const arg = promptArg(d.itemPromptExpr, d.itemPrompt, names, { [v]: v });
       const inner = itemOpts ? `agent(${arg}, ${itemOpts})` : `agent(${arg})`;
       // parallel(SOURCE.map(<v> => () => agent(...)))  — the corpus's dominant shape.
-      return [exemptLine(`const ${bind} = await parallel(${sourceExpr}.map(${v} => () => ${inner}))`, d.itemPromptExpr)];
+      return [exemptLine(`const ${bind} = await parallel(${sourceExpr}.map(${v} => () => ${inner}))`, 'agent(', d.itemPromptExpr)];
     }
     case 'loopUntilCheck':
       return emitLoop(node.data as LoopUntilCheckData, names.get(node.id)!, names, defaultModel).map(plain);
@@ -375,10 +391,16 @@ export function isBranch(node: WorkflowNode): node is Extract<WorkflowNode, { ki
   return node.kind === 'branch';
 }
 
-/** Condition expression for a branch node (used by the if/else emitter + tests). */
+/**
+ * Condition expression for a branch node (used by the if/else emitter + tests).
+ * Prefers a verbatim `condExpr` (imported `if` — emitted as-is, self-lint-exempt);
+ * otherwise builds the structured `<bind>.<field>` (optionally negated) condition.
+ */
 export function branchCondition(d: BranchData, names: Map<string, string>): string {
-  const bind = d.source === 'args' ? 'args' : (names.get(d.source) ?? d.source);
-  const expr = `${bind}.${d.field}`;
+  if (d.condExpr !== undefined) return d.condExpr;
+  const src = d.source ?? '';
+  const bind = src === 'args' ? 'args' : (names.get(src) ?? src);
+  const expr = d.field ? `${bind}.${d.field}` : bind;
   return d.negate ? `!(${expr})` : expr;
 }
 

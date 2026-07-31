@@ -30,8 +30,8 @@ function lintJson(file: GeneratedFile): void {
 // (parallel/phase/log/…) and arbitrary JS built-ins only ever appear inside `raw`
 // nodes, whose identifiers are exempt from this check (opaque user code; B3).
 const GLOBALS = new Set([
-  // workflow runtime the emitter uses (parallel is emitted by the `parallel` kind)
-  'agent', 'pipeline', 'parallel', 'args', 'meta', 'console',
+  // workflow runtime the emitter uses (parallel/phase are emitted by their kinds)
+  'agent', 'pipeline', 'parallel', 'phase', 'args', 'meta', 'console',
   // JS built-ins the emitter can produce
   'JSON', 'Boolean', 'Number', 'String', 'Object', 'Array', 'Math', 'Promise',
   'undefined', 'null', 'NaN', 'Infinity',

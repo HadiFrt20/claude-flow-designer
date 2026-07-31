@@ -40,6 +40,17 @@ export const workflowMetaDataSchema = z.object({
 });
 
 /**
+ * A `phase('title')` marker (M9): the corpus's dominant structuring primitive (176
+ * uses). A bare runtime call that names the following block of work. Members are the
+ * nodes whose `parentId` is this phase node; codegen emits `phase(<title>)` before
+ * them, and the canvas renders a titled group container. Produces no binding, takes
+ * no result ref. Phases are flat (no phase nests inside a phase).
+ */
+export const phaseDataSchema = z.object({
+  title: z.string(),
+});
+
+/**
  * Undocumented-but-real agent opts the corpus uses (phase/effort/agentType/…),
  * preserved verbatim as raw JS value expressions keyed by opt name so a real
  * `agent(prompt, { label, phase, effort })` call types instead of falling to raw.
@@ -96,11 +107,21 @@ export const parallelDataSchema = z.object({
   extraOpts: extraOptsSchema.optional(),
 });
 
-/** Conditional on an agent result; two labeled outgoing edges (`then`/`else`). */
+/**
+ * Conditional; two labeled outgoing edges (`then`/`else`). The condition is EITHER
+ * structured (`source` + `field` + `negate?`, the authoring path) OR a verbatim JS
+ * expression (`condExpr` — the M9 import/visualization path, mirroring agent.promptExpr):
+ * a real hand-authored `if (failing.length)` / `if (!findings)` types as a branch with
+ * `condExpr` set, emitted as-is and self-lint-exempt, rather than dropping the whole `if`
+ * to raw. Exactly one form is used (parser sets condExpr; codegen prefers it). `source`
+ * and `field` are optional so the two forms are mutually exclusive without a refine()
+ * (which discriminatedUnion forbids); CF617-adjacent rules enforce "one of".
+ */
 export const branchDataSchema = z.object({
-  source: resultRefSchema, // node id whose result is tested
-  field: fieldPathSchema, // boolean-ish field on that result
+  source: resultRefSchema.optional(), // node id whose result is tested (structured form)
+  field: fieldPathSchema.optional(), // boolean-ish field on that result (structured form)
   negate: z.boolean().optional(),
+  condExpr: z.string().optional(), // verbatim JS condition (imported `if` — emitted as-is)
 });
 
 /** The doc's "keep fixing until a check passes" shape → a bounded `while` loop. */
@@ -136,7 +157,10 @@ export const rawDataSchema = z.object({
 // Node union (discriminated on `kind`)
 // ---------------------------------------------------------------------------
 
-const nodeBase = { id: z.string(), label: z.string(), position: positionSchema };
+// `parentId` (M9): optional containment pointer — the id of a `phase` node that
+// visually + structurally groups this node. Orthogonal to edges (execution order);
+// only a phase may be a parent (CF618). Members still participate in the edge flow.
+const nodeBase = { id: z.string(), label: z.string(), position: positionSchema, parentId: z.string().optional() };
 
 function node<K extends string, D extends z.ZodTypeAny>(kind: K, data: D) {
   return z.object({ ...nodeBase, kind: z.literal(kind), data });
@@ -144,6 +168,7 @@ function node<K extends string, D extends z.ZodTypeAny>(kind: K, data: D) {
 
 export const workflowNodeSchema = z.discriminatedUnion('kind', [
   node('workflow.meta', workflowMetaDataSchema),
+  node('phase', phaseDataSchema),
   node('agent', agentDataSchema),
   node('pipeline', pipelineDataSchema),
   node('parallel', parallelDataSchema),
@@ -158,11 +183,12 @@ export type NodeKind = WorkflowNode['kind'];
 
 /** All node kinds, for exhaustiveness checks and edge-compatibility tables. */
 export const NODE_KINDS = [
-  'workflow.meta', 'agent', 'pipeline', 'parallel', 'branch', 'loopUntilCheck', 'output.return', 'raw',
+  'workflow.meta', 'phase', 'agent', 'pipeline', 'parallel', 'branch', 'loopUntilCheck', 'output.return', 'raw',
 ] as const satisfies readonly NodeKind[];
 
 // Narrowed data types (handy for rule + codegen code).
 export type WorkflowMetaData = z.infer<typeof workflowMetaDataSchema>;
+export type PhaseData = z.infer<typeof phaseDataSchema>;
 export type AgentData = z.infer<typeof agentDataSchema>;
 export type PipelineData = z.infer<typeof pipelineDataSchema>;
 export type ParallelData = z.infer<typeof parallelDataSchema>;
