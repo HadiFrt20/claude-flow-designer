@@ -65,8 +65,9 @@ still generic graph checks) and **CF6xx** workflow-script rules. RuleIds are sta
 | CF615 | info | Downstream `.field` ref on an `agent` with no `schema` (structured output recommended) | add schema |
 | CF616 | info | Graph contains a `raw` node — imported code kept verbatim (not modeled as typed nodes) | — |
 | CF617 | error | `phase` node with an empty `title` | — |
-| CF618 | error | `parentId` references a node that doesn't exist or isn't a `phase` | detach from parent |
+| CF618 | error | `parentId` references a node that doesn't exist or isn't a `phase`, OR a `phase` node is itself parented (phases are flat) | detach from parent |
 | CF619 | info | `branch` uses a verbatim `condExpr` (structural view — best-effort re-export, not byte-identical) | — |
+| CF620 | error | `branch` condition is malformed: not exactly one of a verbatim `condExpr` or a structured `source`+`field` (neither set, or both set) | — |
 
 > CF007 (dup slug) is retired — a graph is one workflow; the meta.name↔slug concern is CF611.
 > CF619 mirrors CF616's spirit for `branch`-from-`if`: it flags that the region re-exports in canonical

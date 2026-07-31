@@ -115,7 +115,7 @@ export const parallelDataSchema = z.object({
  * `condExpr` set, emitted as-is and self-lint-exempt, rather than dropping the whole `if`
  * to raw. Exactly one form is used (parser sets condExpr; codegen prefers it). `source`
  * and `field` are optional so the two forms are mutually exclusive without a refine()
- * (which discriminatedUnion forbids); CF617-adjacent rules enforce "one of".
+ * (which discriminatedUnion forbids); CF620 enforces "exactly one of" (neither/both).
  */
 export const branchDataSchema = z.object({
   source: resultRefSchema.optional(), // node id whose result is tested (structured form)

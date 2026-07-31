@@ -457,13 +457,35 @@ export function parseWorkflowJs(source: string, slug = 'imported'): WorkflowGrap
   };
 
   /**
+   * True when a binding declared at the top of either arm is referenced AFTER the
+   * `if` (a word-boundary match in the trailing source). Lifting such an `if` to a
+   * branch would make that binding arm-exclusive, and a later reference to it is a
+   * non-linearizable merge (CF609 error) — so we keep the whole `if` as raw instead,
+   * exactly as M8 did (Tier-3 contract: an imported workflow re-emits valid JS).
+   */
+  function armBindingEscapes(stmt: Node): boolean {
+    const consequent = stmt.consequent as Node;
+    const alternate = (stmt as { alternate?: Node }).alternate;
+    const names = new Set<string>();
+    for (const s of blockBody(consequent)) for (const nm of declaredNames(s)) names.add(nm);
+    if (alternate) for (const s of blockBody(alternate)) for (const nm of declaredNames(s)) names.add(nm);
+    if (names.size === 0) return false;
+    const after = source.slice(stmt.end);
+    for (const nm of names) {
+      const esc = nm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (new RegExp(`\\b${esc}\\b`).test(after)) return true;
+    }
+    return false;
+  }
+
+  /**
    * Reconstruct an `if` as a `branch` with a verbatim `condExpr`, its arms parsed as
    * `then`/`else` sub-sequences (fan-out edges). Returns the branch node id, or null
    * to keep the whole `if` as raw when it isn't safe to lift: it must gate
-   * orchestration, and neither arm may carry a DIRECT return (that would produce a
-   * second top-level return — CF606). Arm members share the branch's parentId (phase
-   * containment is by parentId; branch structure is by then/else edges — keeps CF618
-   * "parent must be a phase" true).
+   * orchestration; neither arm may carry a DIRECT return (would produce a second
+   * top-level return — CF606); and no arm binding may escape the arm (would be a
+   * non-linearizable CF609 merge — M1). Arm members are parented to the enclosing
+   * phase (branch structure is by then/else edges, not parentId).
    */
   function tryBranch(stmt: Node, parentId: string | undefined): string | null {
     const test = stmt.test as Node;
@@ -471,6 +493,7 @@ export function parseWorkflowJs(source: string, slug = 'imported'): WorkflowGrap
     const alternate = (stmt as { alternate?: Node }).alternate;
     if (!containsOrchestration(stmt)) return null;
     if (armHasDirectReturn(consequent) || (alternate && armHasDirectReturn(alternate))) return null;
+    if (armBindingEscapes(stmt)) return null;
     const condExpr = source.slice(test.start, test.end);
     const bId = push({ id: freshId('branch'), kind: 'branch', label: 'branch', position: POS, data: { condExpr } }, parentId);
     // then arm (required): link the branch to the arm's head with the `then` handle.
@@ -499,10 +522,12 @@ export function parseWorkflowJs(source: string, slug = 'imported'): WorkflowGrap
     let curParent = parentId; // parent for non-phase items; a phase marker updates it
     for (const stmt of stmts) {
       // phase('title') marker → a group container node; members after it belong to it.
+      // A phase is ALWAYS unparented (phases are flat — no phase nests in a phase, so
+      // a phase marker inside an arm under an outer phase is not parented to it; B4).
       if (stmt.type === 'ExpressionStatement') {
         const title = phaseMarker((stmt as { expression?: Node }).expression);
         if (title !== null) {
-          const phId = push({ id: freshId('phase'), kind: 'phase', label: labelFor(title.replace(/\s+/g, '-').toLowerCase(), 'phase'), position: POS, data: { title } }, parentId);
+          const phId = push({ id: freshId('phase'), kind: 'phase', label: labelFor(title.replace(/\s+/g, '-').toLowerCase(), 'phase'), position: POS, data: { title } });
           if (prevTail) link(prevTail, phId);
           headId ??= phId; prevTail = phId;
           curParent = phId; // subsequent siblings are members of this phase

@@ -146,6 +146,32 @@ const reviewDims: WorkflowGraph = {
   ],
 };
 
+// --- poc-phases: M9 structural view — phase groups + a condExpr branch ------
+const pocPhases: WorkflowGraph = {
+  version: 1,
+  meta: { name: 'PoC Phases', slug: 'poc-phases', description: 'A phased build with a verify branch' },
+  settings: {},
+  nodes: [
+    node({ id: 'meta', kind: 'workflow.meta', label: 'PoC Phases', position: P, data: { name: 'poc-phases', description: 'A phased build with a verify branch' } }),
+    node({ id: 'phUnderstand', kind: 'phase', label: 'understand', position: P, data: { title: 'Understand' } }),
+    node({ id: 'spec', kind: 'agent', label: 'Spec', position: P, parentId: 'phUnderstand', data: { prompt: 'Write a spec for {{args}}.', label: 'spec' } }),
+    node({ id: 'phVerify', kind: 'phase', label: 'verify', position: P, data: { title: 'Verify' } }),
+    node({ id: 'check', kind: 'agent', label: 'Check', position: P, parentId: 'phVerify', data: { prompt: 'Verify {{spec}}.', label: 'check', schema: { type: 'object', properties: { failing: { type: 'boolean' } } } } }),
+    node({ id: 'br', kind: 'branch', label: 'failing?', position: P, parentId: 'phVerify', data: { condExpr: 'check.failing' } }),
+    node({ id: 'repair', kind: 'agent', label: 'Repair', position: P, parentId: 'phVerify', data: { prompt: 'Repair the failures in {{check}}.', label: 'repair' } }),
+    node({ id: 'ret', kind: 'output.return', label: 'return', position: P, data: { source: 'check', transform: 'none' } }),
+  ],
+  edges: [
+    { id: 'e1', source: 'meta', target: 'phUnderstand' },
+    { id: 'e2', source: 'phUnderstand', target: 'spec' },
+    { id: 'e3', source: 'spec', target: 'phVerify' },
+    { id: 'e4', source: 'phVerify', target: 'check' },
+    { id: 'e5', source: 'check', target: 'br' },
+    { id: 'e6', source: 'br', target: 'repair', sourceHandle: 'then' },
+    { id: 'e7', source: 'br', target: 'ret' },
+  ],
+};
+
 export interface Template {
   slug: string;
   title: string;
@@ -159,4 +185,5 @@ export const TEMPLATES: Template[] = [
   { slug: 'branch-review', title: 'Branch Review', graph: branchReview },
   { slug: 'grade-prs', title: 'Grade PRs (args pipeline)', graph: gradePrs },
   { slug: 'review-dims', title: 'Review Dims (parallel)', graph: reviewDims },
+  { slug: 'poc-phases', title: 'PoC Phases (phase groups + branch)', graph: pocPhases },
 ];

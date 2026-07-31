@@ -329,4 +329,19 @@ export const fixtures: Record<RuleId, { hit: WorkflowGraph; miss: WorkflowGraph 
     ),
     miss: valid(),
   },
+  CF620: {
+    // A branch with NEITHER a condExpr nor a structured source+field (empty source,
+    // no field). Schema-valid (source is a bare string; field/condExpr omitted) but
+    // has no condition to emit — CF620 is the user-facing gate for that (B1).
+    hit: g(
+      [n.meta('meta', { name: 't', description: 'd' }),
+       n.agent('review', { prompt: 'Review.', schema: { type: 'object', properties: { safe: { type: 'boolean' } } } }),
+       n.branch('br', { source: '' }),
+       n.agent('approve', { prompt: 'Approve.' }),
+       n.agent('request', { prompt: 'Request.' }),
+       n.ret('ret', { source: 'review', transform: 'none' })],
+      [e('meta', 'review'), e('review', 'br'), e('br', 'approve', 'then'), e('br', 'request', 'else'), e('br', 'ret')],
+    ),
+    miss: valid(),
+  },
 };

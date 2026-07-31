@@ -12,6 +12,8 @@ export function edgeAllowed(source: NodeKind, target: NodeKind): boolean {
   // Nothing targets the root; the return sink has no outgoing edges.
   if (target === 'workflow.meta') return false;
   if (source === 'output.return') return false;
-  // meta, agent, pipeline, branch, loopUntilCheck may all feed any non-root kind.
+  // meta, phase, agent, pipeline, parallel, branch, loopUntilCheck, raw may all feed
+  // any non-root kind. (A `phase` group participates in the exec-order flow like any
+  // other node; its member containment is expressed by parentId, not edges — M9.)
   return true;
 }

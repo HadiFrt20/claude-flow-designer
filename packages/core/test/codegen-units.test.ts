@@ -129,6 +129,11 @@ describe('branchCondition', () => {
   it('wraps in !() when negated', () => {
     expect(branchCondition({ source: 'review', field: 'safe', negate: true }, names)).toBe('!(review.safe)');
   });
+  it('emits a verbatim condExpr as-is (preferred over structured fields)', () => {
+    expect(branchCondition({ condExpr: 'failing.length' }, names)).toBe('failing.length');
+    // condExpr wins even if structured fields are also present.
+    expect(branchCondition({ condExpr: 'r.failing', source: 'review', field: 'safe' }, names)).toBe('r.failing');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -202,6 +207,30 @@ describe('emitWorkflow', () => {
     ));
     expect(out.content).toContain('if (review.safe) {');
     expect(out.content).toContain('} else {');
+  });
+
+  it('emits a phase marker that hugs its first member (M9)', () => {
+    const out = file(g(
+      [n.meta('meta', { name: 't', description: 'd' }),
+       n.phase('ph', { title: 'Build' }),
+       { ...n.agent('a', { prompt: 'Do it.' }), parentId: 'ph' },
+       n.ret('ret', { source: 'a', transform: 'none' })],
+      [e('meta', 'ph'), e('ph', 'a'), e('a', 'ret')],
+    ));
+    expect(out.content).toContain('phase("Build")\nconst a = await agent(`Do it.`)'); // no blank between marker + member
+  });
+
+  it('emits a condExpr branch verbatim and else-less (M9)', () => {
+    const out = file(g(
+      [n.meta('meta', { name: 't', description: 'd' }),
+       n.agent('r', { prompt: 'Check.' }),
+       n.branch('br', { condExpr: 'r.failing && count > 0' }),
+       n.agent('fix', { prompt: 'Repair.' }),
+       n.ret('ret', { source: 'r', transform: 'none' })],
+      [e('meta', 'r'), e('r', 'br'), e('br', 'fix', 'then'), e('br', 'ret')],
+    ));
+    expect(out.content).toContain('if (r.failing && count > 0) {'); // verbatim condition
+    expect(out.content).not.toContain('} else {'); // no else clause for an else-less branch
   });
 
   it('emits a NESTED branch as its own if/else, not flattened (B4)', () => {

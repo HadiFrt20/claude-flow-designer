@@ -554,8 +554,18 @@ const cf618: Rule = {
   run(graph) {
     const byId = new Map(graph.nodes.map((n) => [n.id, n]));
     const diags: Diagnostic[] = [];
+    const detach = (id: string) => ({ title: 'Detach from parent', apply: (g: typeof graph) => ({ ...g, nodes: g.nodes.map((m) => (m.id === id ? { ...m, parentId: undefined } : m)) }) });
     for (const n of graph.nodes) {
       if (n.parentId === undefined) continue;
+      // Phases are flat: a phase node may not itself be parented (B4).
+      if (n.kind === 'phase') {
+        diags.push({
+          ruleId: 'CF618', severity: 'error', nodeId: n.id,
+          message: 'A phase cannot be nested inside another node (phases are flat).',
+          docsUrl: DOCS_URLS.workflows, quickFix: detach(n.id),
+        });
+        continue;
+      }
       const parent = byId.get(n.parentId);
       if (!parent || parent.kind !== 'phase') {
         diags.push({
@@ -563,8 +573,33 @@ const cf618: Rule = {
           message: parent
             ? `parentId references "${n.parentId}" (${parent.kind}), which is not a phase.`
             : `parentId references unknown node "${n.parentId}".`,
+          docsUrl: DOCS_URLS.workflows, quickFix: detach(n.id),
+        });
+      }
+    }
+    return diags;
+  },
+};
+
+const cf620: Rule = {
+  id: 'CF620',
+  severity: 'error',
+  run(graph) {
+    // A branch condition must be EXACTLY one of: a verbatim condExpr, or a structured
+    // source (+ field). Neither → the emitter has no condition to write (invalid JS);
+    // both → ambiguous (SPEC-NODES: mutually exclusive). This is the user-facing gate
+    // that keeps a source-less/field-less Branch from crashing self-lint (B1).
+    const diags: Diagnostic[] = [];
+    for (const b of nodesOfKind(graph, 'branch')) {
+      const hasExpr = b.data.condExpr !== undefined && b.data.condExpr.trim() !== '';
+      const hasStructured = b.data.source !== undefined && b.data.source !== '' && b.data.field !== undefined && b.data.field !== '';
+      if (hasExpr === hasStructured) { // both true, or both false
+        diags.push({
+          ruleId: 'CF620', severity: 'error', nodeId: b.id, field: 'condExpr',
+          message: hasExpr
+            ? 'branch has both a condExpr and a structured source/field (use exactly one).'
+            : 'branch has no condition (set a condExpr, or a source and boolean field).',
           docsUrl: DOCS_URLS.workflows,
-          quickFix: { title: 'Detach from parent', apply: (g) => ({ ...g, nodes: g.nodes.map((m) => (m.id === n.id ? { ...m, parentId: undefined } : m)) }) },
         });
       }
     }
@@ -588,5 +623,5 @@ const cf619: Rule = {
 
 export const workflowRules: Rule[] = [
   cf601, cf602, cf604, cf605, cf606, cf607, cf608, cf609, cf610, cf611, cf613, cf614, cf615, cf616,
-  cf617, cf618, cf619,
+  cf617, cf618, cf619, cf620,
 ];

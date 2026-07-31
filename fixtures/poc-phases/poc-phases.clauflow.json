@@ -1,0 +1,162 @@
+{
+  "version": 1,
+  "meta": {
+    "name": "PoC Phases",
+    "slug": "poc-phases",
+    "description": "A phased build with a verify branch"
+  },
+  "settings": {},
+  "nodes": [
+    {
+      "id": "meta",
+      "kind": "workflow.meta",
+      "label": "PoC Phases",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "name": "poc-phases",
+        "description": "A phased build with a verify branch"
+      }
+    },
+    {
+      "id": "phUnderstand",
+      "kind": "phase",
+      "label": "understand",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "title": "Understand"
+      }
+    },
+    {
+      "id": "spec",
+      "kind": "agent",
+      "label": "Spec",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "parentId": "phUnderstand",
+      "data": {
+        "prompt": "Write a spec for {{args}}.",
+        "label": "spec"
+      }
+    },
+    {
+      "id": "phVerify",
+      "kind": "phase",
+      "label": "verify",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "title": "Verify"
+      }
+    },
+    {
+      "id": "check",
+      "kind": "agent",
+      "label": "Check",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "parentId": "phVerify",
+      "data": {
+        "prompt": "Verify {{spec}}.",
+        "label": "check",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "failing": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "br",
+      "kind": "branch",
+      "label": "failing?",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "parentId": "phVerify",
+      "data": {
+        "condExpr": "check.failing"
+      }
+    },
+    {
+      "id": "repair",
+      "kind": "agent",
+      "label": "Repair",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "parentId": "phVerify",
+      "data": {
+        "prompt": "Repair the failures in {{check}}.",
+        "label": "repair"
+      }
+    },
+    {
+      "id": "ret",
+      "kind": "output.return",
+      "label": "return",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "source": "check",
+        "transform": "none"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "meta",
+      "target": "phUnderstand"
+    },
+    {
+      "id": "e2",
+      "source": "phUnderstand",
+      "target": "spec"
+    },
+    {
+      "id": "e3",
+      "source": "spec",
+      "target": "phVerify"
+    },
+    {
+      "id": "e4",
+      "source": "phVerify",
+      "target": "check"
+    },
+    {
+      "id": "e5",
+      "source": "check",
+      "target": "br"
+    },
+    {
+      "id": "e6",
+      "source": "br",
+      "target": "repair",
+      "sourceHandle": "then"
+    },
+    {
+      "id": "e7",
+      "source": "br",
+      "target": "ret"
+    }
+  ]
+}

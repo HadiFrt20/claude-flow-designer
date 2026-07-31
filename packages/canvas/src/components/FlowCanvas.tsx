@@ -1,7 +1,7 @@
 // React Flow canvas. Mirrors the store's WorkflowGraph into React Flow nodes/
 // edges, rejects incompatible connections up front (edgeAllowed — same rule as
 // CF005), and renders each node with its category accent + diagnostic badge.
-import { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useMemo } from 'react';
 import {
   ReactFlow,
   Background,
@@ -104,28 +104,23 @@ export function FlowCanvas({ store }: { store: EditorStore }) {
     return m;
   }, [diags]);
 
-  // Origin (top-left absolute position) of each phase container, so a child drag —
-  // which React Flow reports relative to the parent — can be converted back to the
-  // absolute coordinate the store holds. Populated while building rfNodes.
-  const boxOrigin = useRef(new Map<string, { x: number; y: number }>());
   const parentOf = useMemo(() => {
     const m = new Map<string, string>();
     for (const n of state.graph.nodes) if (n.parentId) m.set(n.id, n.parentId);
     return m;
   }, [state.graph.nodes]);
 
-  const rfNodes: RFNode<NodeData>[] = useMemo(() => {
-    const nodes = state.graph.nodes;
-    const origins = new Map<string, { x: number; y: number }>();
-    // Members grouped by their phase parent, so each phase renders as a container
-    // box sized to enclose its members (React Flow parent/child: parent listed first,
-    // child positions relative to the parent, parent given an explicit size).
+  // Container geometry per phase: the bounding box of its members' absolute
+  // positions, padded. React Flow renders a phase as this box (parent node) and
+  // positions members relative to its top-left origin. Computed once and read by
+  // both rfNodes (rendering) and onNodesChange (converting a child drag back to
+  // absolute) — no ref mutation during render (a React correctness smell).
+  const boxes = useMemo(() => {
     const PAD = 24; const TITLE_H = 28; const NODE_W = 180; const NODE_H = 64;
-    const membersOf = new Map<string, typeof nodes>();
-    for (const n of nodes) {
+    const membersOf = new Map<string, typeof state.graph.nodes>();
+    for (const n of state.graph.nodes) {
       if (n.parentId) (membersOf.get(n.parentId) ?? membersOf.set(n.parentId, []).get(n.parentId)!).push(n);
     }
-    // Container geometry per phase: bounding box of its members' absolute positions.
     const box = new Map<string, { x: number; y: number; w: number; h: number }>();
     for (const [pid, members] of membersOf) {
       const xs = members.map((m) => m.position.x);
@@ -133,9 +128,13 @@ export function FlowCanvas({ store }: { store: EditorStore }) {
       const minX = Math.min(...xs); const minY = Math.min(...ys);
       const maxX = Math.max(...xs); const maxY = Math.max(...ys);
       box.set(pid, { x: minX - PAD, y: minY - TITLE_H - PAD, w: (maxX - minX) + NODE_W + PAD * 2, h: (maxY - minY) + NODE_H + TITLE_H + PAD * 2 });
-      origins.set(pid, { x: minX - PAD, y: minY - TITLE_H - PAD });
     }
-    boxOrigin.current = origins;
+    return box;
+  }, [state.graph.nodes]);
+
+  const rfNodes: RFNode<NodeData>[] = useMemo(() => {
+    const nodes = state.graph.nodes;
+    const box = boxes;
     const out: RFNode<NodeData>[] = [];
     // Phase containers first (React Flow requires parents before children).
     for (const n of nodes) {
@@ -162,7 +161,7 @@ export function FlowCanvas({ store }: { store: EditorStore }) {
       });
     }
     return out;
-  }, [state.graph.nodes, state.selectedNodeId, worstByNode]);
+  }, [state.graph.nodes, state.selectedNodeId, worstByNode, boxes]);
 
   const rfEdges: RFEdge[] = useMemo(
     () => state.graph.edges.map((e) => ({ id: e.id, source: e.source, target: e.target, label: e.label })),
@@ -195,7 +194,7 @@ export function FlowCanvas({ store }: { store: EditorStore }) {
           // A phase member's position is reported relative to its container; the
           // store holds absolute coordinates, so add back the container origin.
           const pid = parentOf.get(ch.id);
-          const origin = pid ? boxOrigin.current.get(pid) : undefined;
+          const origin = pid ? boxes.get(pid) : undefined;
           const abs = origin ? { x: ch.position.x + origin.x, y: ch.position.y + origin.y } : ch.position;
           store.moveNode(ch.id, abs);
         } else if (ch.type === 'select' && ch.selected) {
@@ -207,7 +206,7 @@ export function FlowCanvas({ store }: { store: EditorStore }) {
       // Let RF compute transient drag state for smoothness.
       void applyNodeChanges(changes, rfNodes);
     },
-    [store, rfNodes],
+    [store, rfNodes, parentOf, boxes],
   );
 
   const minimapColor = useCallback((n: RFNode) => ACCENT[categoryOf((n.data as NodeData).node.kind)], []);

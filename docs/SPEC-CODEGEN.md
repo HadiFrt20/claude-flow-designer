@@ -41,10 +41,11 @@ return <expr>
 | kind | emission |
 |---|---|
 | `workflow.meta` | `export const meta = { name, description }` (header; not a statement in the body) |
+| `phase` | `phase(<title>)` — a bare marker (title via `JSON.stringify`); hugs its first member (no blank line between the marker and the next node) |
 | `agent` | `const <bind> = await agent(<promptArg>, { schema?, label?, model?, …extraOpts })` |
 | `pipeline` | `const <bind> = await pipeline(<sourceExpr>, item => agent(<promptArg>, { label?, schema?, model?, …extraOpts }))` |
 | `parallel` | `const <bind> = await parallel(<sourceExpr>.map(<itemVar> => () => agent(<promptArg>, { … })))` (concurrent fan-out) |
-| `branch` | `if (<cond>) { <then-arm, topo order> } else { <else-arm> }`; `<cond>` = `<sourceBind>.<field>` (or `!…` if `negate`) |
+| `branch` | `if (<cond>) { <then-arm, topo order> } [else { <else-arm> }]`; `<cond>` = verbatim `condExpr` when set (self-lint-exempt, like `promptExpr`), else `<sourceBind>.<field>` (or `!…` if `negate`). A `condExpr` branch may omit the `else` clause |
 | `loopUntilCheck` | a bounded `while` (see below) |
 | `output.return` | `return <expr>;` — the last statement; exactly one |
 | `raw` | the node's `code`, emitted verbatim at its topo position |
