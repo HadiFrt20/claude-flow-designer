@@ -78,18 +78,19 @@
       APPROVE after 3 rounds (B1–B10); 356 tests; lint clean; fixtures drift-clean.
 
 ## M9 — Structural view (phases as groups, real branches surfaced)
-- [ ] `phase` group node kind + `parentId` containment on the node base; NODE_KINDS drift-pin.
-- [ ] Parser: `phase('X')` → titled group wrapping subsequent members; recurse into `if`
-      consequent/alternate + arrow/callback blocks to surface nested `branch` when they gate an
-      agent/pipeline/parallel; pure data-munging `if`/`for` stays `raw`.
-- [ ] `branch.condExpr`: verbatim JS condition (mirrors M8 promptExpr) so a real `if (failing.length)`
+- [x] `phase` group node kind + `parentId` containment on the node base; NODE_KINDS drift-pin.
+- [x] Parser: `phase('X')` → titled group wrapping subsequent members; recurse into `if`
+      consequent/alternate to surface nested `branch` when they gate an agent/pipeline/parallel;
+      pure data-munging `if`/`for` and arm-binding-escaping `if` stay `raw`.
+- [x] `branch.condExpr`: verbatim JS condition (mirrors M8 promptExpr) so a real `if (failing.length)`
       types as a branch, self-lint-exempt; structured `{source,field,negate}` stays the authoring path.
-- [ ] Codegen: emit `phase(<title>)` before group members + parsed branches; `phase` added to
-      self-lint GLOBALS; byte-identical for phase groups + all M6–M8 fixtures.
-- [ ] Validation CF617/618/619 (+ matrix parity, 24 rules) — phase title, parentId target, condExpr info.
-- [ ] Canvas: `phase` palette/fields + render as titled group container nesting its children.
-- [ ] Corpus re-run: phase groups > 0 and branch nodes > 0 across 73 workflows (was 0/0), 0 hard
-      errors; round-trip fixpoint holds; code-reviewer APPROVE.
+- [x] Codegen: emit `phase(<title>)` hugging its first member + parsed branches (else-less allowed);
+      `phase` added to self-lint GLOBALS; byte-identical for phase groups + all M6–M8 fixtures.
+- [x] Validation CF617/618/619/620 (+ matrix parity, 25 rules) — phase title, parentId target,
+      condExpr info, branch-condition exactly-one.
+- [x] Canvas: `phase` palette/fields + render as titled group container nesting its children.
+- [x] Corpus re-run: 168 phase nodes across all 70 workflows (was 0), 1 branch; 0 self-lint errors,
+      0 CF609/618/620; round-trip fixpoint holds across the corpus; code-reviewer APPROVE (round 2).
 
 ## M5 — Sharing & polish
 - [ ] Plugin-bundle export target.
