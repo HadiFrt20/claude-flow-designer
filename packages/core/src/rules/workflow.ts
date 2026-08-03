@@ -235,6 +235,20 @@ const cf605: Rule = {
           }
         }
       }
+      // Structured `source` refs (output.return.source, pipeline/parallel/branch.source)
+      // compile to a binding reference exactly like a template ref, so the SAME checks
+      // apply: the target must exist, produce a single binding, and be upstream. Without
+      // this, e.g. output.return.source pointing at a destructured fanout (no single
+      // binding) or a phase validates clean but crashes self-lint on the unbound name.
+      for (const ref of structuredRefsOf(n)) {
+        if (ref.id === 'args' || rawBinding.has(ref.id)) continue; // args / a bare-declared name
+        const target = byId.get(ref.id);
+        if (!target) {
+          diags.push({ ruleId: 'CF605', severity: 'error', nodeId: n.id, field: ref.field, message: `${n.kind}.${ref.field} references unknown node "${ref.id}".`, docsUrl: DOCS_URLS.workflows });
+        } else if (!producesBinding(target)) {
+          diags.push({ ruleId: 'CF605', severity: 'error', nodeId: n.id, field: ref.field, message: `${n.kind}.${ref.field} targets ${target.kind} "${ref.id}", which produces no result binding.`, docsUrl: DOCS_URLS.workflows });
+        }
+      }
     }
     return diags;
   },
@@ -335,7 +349,12 @@ const cf607: Rule = {
         const src = byId.get(b.source);
         if (!src || src.kind !== 'agent' || !src.data.schema) return;
         const props = (src.data.schema as { properties?: Record<string, { type?: string }> }).properties;
-        if (!b.sourceField) return; // a map without sourceField maps the source directly
+        if (!b.sourceField) {
+          // Source is an object result (schema-bearing agent) but no field selects a
+          // list — same defect CF607 flags for pipeline/parallel.
+          diags.push({ ruleId: 'CF607', severity: 'error', nodeId: fo.id, field: `branches.${i}.sourceField`, message: `fanout branch ${i + 1} source is an object result but no sourceField selects a list.`, docsUrl: DOCS_URLS.workflows });
+          return;
+        }
         const fieldType = props?.[b.sourceField.split('.')[0]!]?.type;
         if (fieldType && fieldType !== 'array') {
           diags.push({ ruleId: 'CF607', severity: 'error', nodeId: fo.id, field: `branches.${i}.sourceField`, message: `fanout branch ${i + 1} sourceField "${b.sourceField}" has schema type "${fieldType}", not array.`, docsUrl: DOCS_URLS.workflows });

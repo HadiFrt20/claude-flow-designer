@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { validateGraph, exportGate } from '../src/validate.js';
+import { generate } from '../src/codegen/index.js';
 import type { RuleId } from '../src/schema/types.js';
 import { ALL_RULES } from '../src/rules/index.js';
 import { fixtures, g, e, n } from './fixtures.js';
@@ -395,6 +396,19 @@ describe('fanout rules (M10)', () => {
       [e('meta', 'fo'), e('fo', 'use'), e('use', 'ret')],
     );
     expect(idsFor(graph)).toContain('CF605');
+  });
+
+  it('CF605 flags a STRUCTURED source ref (output.return.source) to a destructured fanout', () => {
+    // The sibling channel to the {{ref}} case: a resultRef pointing at a node that
+    // produces no single binding must be a gate diagnostic, not a self-lint crash.
+    const graph = g(
+      [n.meta('meta', { name: 't', description: 'd' }),
+       n.fanout('fo', { mode: 'parallel', bindingPattern: '[a, b]', bindingPatternNames: ['a', 'b'], branches: [{ kind: 'thunk', prompt: 'one' }, { kind: 'thunk', prompt: 'two' }] }),
+       n.ret('ret', { source: 'fo', transform: 'none' })], // return the fanout node id → no single binding
+      [e('meta', 'fo'), e('fo', 'ret')],
+    );
+    expect(idsFor(graph)).toContain('CF605');
+    expect(() => generate(graph)).toThrow(); // gate blocks before emit (no silent bad output)
   });
 
   it('a destructured fanout referenced by its bare pattern name resolves cleanly + generates', () => {
