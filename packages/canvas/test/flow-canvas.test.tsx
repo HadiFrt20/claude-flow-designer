@@ -47,6 +47,27 @@ describe('FlowCanvas', () => {
     expect(screen.getByText(/sequential · one agent × args/)).toBeInTheDocument();
   });
 
+  it('renders a fanout node with one lane per branch and a lane count', () => {
+    const store = new EditorStore();
+    store.addNode({ id: 'fo', kind: 'fanout', label: 'Angles', position: { x: 0, y: 0 }, data: { mode: 'parallel', branches: [
+      { kind: 'thunk', prompt: 'a', label: 'speed' },
+      { kind: 'thunk', prompt: 'b', label: 'safety' },
+      { kind: 'map', source: 'items', sourceField: 'files', itemVar: 'f', itemPrompt: 'do {{f}}' },
+    ] } });
+    render(<FlowCanvas store={store} />);
+    expect(screen.getByText(/⇉ concurrent · 3 lanes/)).toBeInTheDocument();
+    // a thunk lane shows its label; a map lane shows × <source>
+    expect(screen.getByText('speed')).toBeInTheDocument();
+    expect(screen.getByText('× items.files')).toBeInTheDocument();
+  });
+
+  it('labels a promiseAll fanout as Promise.all', () => {
+    const store = new EditorStore();
+    store.addNode({ id: 'fo', kind: 'fanout', label: 'All', position: { x: 0, y: 0 }, data: { mode: 'promiseAll', branches: [{ kind: 'thunk', prompt: 'a' }] } });
+    render(<FlowCanvas store={store} />);
+    expect(screen.getByText(/\(Promise\.all\)/)).toBeInTheDocument();
+  });
+
   it('shows a diagnostic badge on a node with an error', () => {
     const store = new EditorStore();
     // agent prompt references an unknown node → CF605 error on the node.

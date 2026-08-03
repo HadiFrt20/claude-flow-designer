@@ -748,7 +748,7 @@ function parseFanoutArray(arrayNode: Node, mode: FanoutData['mode'], src: string
     }
     // A literal thunk `() => agent(...)` → a thunk branch.
     if (el.type === 'ArrowFunctionExpression' && (as<{ params: Node[] }>(el).params).length === 0) {
-      let body = as<{ body: Node }>(el).body;
+      const body = as<{ body: Node }>(el).body;
       if (body.type === 'BlockStatement') return null; // only expression-body thunks
       const innerCall = agentCall(body);
       if (!innerCall) return null;

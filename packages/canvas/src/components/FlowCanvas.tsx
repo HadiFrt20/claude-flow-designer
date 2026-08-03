@@ -134,6 +134,82 @@ function FanOutNode({ data }: { data: NodeData }) {
   );
 }
 
+/** One lane's label for a fanout branch: a `map` lane shows `× <source>` (dynamic
+ *  width); a `thunk` lane shows its opts.label or a generic "agent". */
+function fanoutLaneLabel(branch: Extract<WorkflowNode, { kind: 'fanout' }>['data']['branches'][number]): string {
+  if (branch.kind === 'map') {
+    const base = branch.source === 'args' || !branch.source ? 'args' : branch.source;
+    return `× ${branch.sourceField ? `${base}.${branch.sourceField}` : base}`;
+  }
+  return branch.label ? branch.label : 'agent';
+}
+
+/**
+ * A `fanout` node (M10 static-array `parallel([...])`) renders one lane PER BRANCH — a
+ * literal thunk is a concrete lane, a `...map()` spread is a `× <source>` lane (dynamic
+ * width). This makes the heterogeneous concurrent group (2–16 agents) visible instead of
+ * one box. Purely a rendering of the single node's `branches[]`; no extra graph nodes.
+ */
+function FanoutNode({ data }: { data: NodeData }) {
+  const { node, worst } = data;
+  if (node.kind !== 'fanout') return null;
+  const accent = ACCENT.pipeline; // fan-out family accent
+  const dotStyle = { width: 8, height: 8, background: accent, border: 'none' };
+  const branches = node.data.branches;
+  const concurrent = node.data.mode !== 'pipeline';
+  const rowH = 16;
+  const shown = branches.slice(0, 6); // cap the drawn lanes; note overflow below
+  return (
+    <div
+      style={{
+        minWidth: 200, borderRadius: '4px', border: `1px solid ${TOKENS.border}`,
+        borderLeft: `2px solid ${accent}`, background: TOKENS.surfaceRaised, color: TOKENS.text,
+        fontFamily: TOKENS.uiFont, padding: SPACE(2), position: 'relative',
+      }}
+    >
+      <Handle type="target" position={Position.Left} style={dotStyle} />
+      {worst && (
+        <span
+          aria-label={worst === 'error' ? 'has errors' : 'has warnings'}
+          style={{ position: 'absolute', top: -8, right: -8, color: SEVERITY_COLOR[worst], background: TOKENS.surface, borderRadius: '50%', fontSize: '0.75em', padding: '0 3px' }}
+        >
+          {SEVERITY_ICON[worst]}
+        </span>
+      )}
+      <div style={{ fontFamily: TOKENS.monoFont, fontSize: '0.72em', color: TOKENS.textMuted }}>
+        <span aria-hidden>{CATEGORY_GLYPH.pipeline}</span> fanout
+      </div>
+      <div style={{ fontWeight: 600 }}>{node.label || '(unnamed)'}</div>
+      <div style={{ fontSize: '0.68em', color: accent, marginTop: SPACE(1), fontFamily: TOKENS.monoFont }}>
+        {concurrent ? '⇉ concurrent' : '→ sequential'} · {branches.length} {branches.length === 1 ? 'lane' : 'lanes'}
+        {node.data.mode === 'promiseAll' ? ' (Promise.all)' : ''}
+      </div>
+      {/* one row per branch: source dot forking to each lane */}
+      <svg width="100%" height={Math.max(1, shown.length) * rowH + 8} style={{ marginTop: SPACE(1), overflow: 'visible' }} aria-hidden>
+        <circle cx={6} cy={8} r={3} fill={accent} />
+        {shown.map((b, i) => {
+          const y = 8 + i * rowH;
+          return (
+            <g key={i}>
+              <path d={`M 6 8 C 40 8, 40 ${y}, 74 ${y}`} stroke={accent} strokeWidth={1} fill="none" opacity={0.6} />
+              <rect x={74} y={y - 7} width={110} height={14} rx={2} fill={TOKENS.surface} stroke={accent} strokeWidth={0.75} />
+              <text x={79} y={y + 3} fontSize={9} fill={TOKENS.textMuted} fontFamily={TOKENS.monoFont}>
+                {fanoutLaneLabel(b).slice(0, 18)}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+      {branches.length > shown.length && (
+        <div style={{ fontSize: '0.64em', color: TOKENS.textMuted, fontFamily: TOKENS.monoFont }}>
+          +{branches.length - shown.length} more lanes
+        </div>
+      )}
+      <Handle type="source" position={Position.Right} style={dotStyle} />
+    </div>
+  );
+}
+
 // A phase renders as a titled GROUP container (M9): a translucent box sized to
 // enclose its member nodes (which React Flow positions inside via parentId). The
 // title bar names the phase; members are drawn as normal CFNodes on top.
@@ -161,12 +237,13 @@ function PhaseGroupNode({ data }: { data: NodeData }) {
   );
 }
 
-const nodeTypes = { cf: CFNode, phaseGroup: PhaseGroupNode, fanOut: FanOutNode };
+const nodeTypes = { cf: CFNode, phaseGroup: PhaseGroupNode, fanOut: FanOutNode, fanoutLanes: FanoutNode };
 
 /** The React Flow node-type name for a workflow node kind. */
-function rfTypeOf(kind: WorkflowNode['kind']): 'cf' | 'phaseGroup' | 'fanOut' {
+function rfTypeOf(kind: WorkflowNode['kind']): 'cf' | 'phaseGroup' | 'fanOut' | 'fanoutLanes' {
   if (kind === 'phase') return 'phaseGroup';
   if (kind === 'parallel' || kind === 'pipeline') return 'fanOut';
+  if (kind === 'fanout') return 'fanoutLanes';
   return 'cf';
 }
 

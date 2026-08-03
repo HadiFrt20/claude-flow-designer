@@ -72,6 +72,10 @@ export const FIELD_DESCRIPTORS: Record<NodeKind, FieldDescriptor[]> = {
     { key: 'itemSchema', label: 'Per-item schema', type: 'json', group: 'Advanced' },
     MODEL,
   ],
+  fanout: [
+    { key: 'mode', label: 'Mode', type: 'select', group: 'Basic', options: ['parallel', 'pipeline', 'promiseAll'], hint: 'parallel/Promise.all run the lanes concurrently; pipeline runs one per item.' },
+    { key: 'bindingPattern', label: 'Binding pattern', type: 'text', group: 'Advanced', hint: 'A destructuring LHS (e.g. [a, b]) preserved verbatim from import; blank = a single derived name.' },
+  ],
   branch: [
     { key: 'condExpr', label: 'Condition (JS expression)', type: 'code', group: 'Basic', hint: 'A verbatim imported if-condition (e.g. failing.length) — emitted as-is. Leave blank to use the structured fields below.' },
     { key: 'source', label: 'Test result of', type: 'resultRef', group: 'Basic', hint: 'Node id whose result is tested (structured form; ignored if a JS condition is set).' },
@@ -117,6 +121,7 @@ export const PALETTE: { group: string; entries: PaletteEntry[] }[] = [
       { kind: 'agent', label: 'Agent' },
       { kind: 'pipeline', label: 'Pipeline (fan-out)' },
       { kind: 'parallel', label: 'Parallel (concurrent)' },
+      { kind: 'fanout', label: 'Fan-out (static array)' },
     ],
   },
   {
@@ -143,6 +148,8 @@ export function defaultData(kind: NodeKind): Record<string, unknown> {
       return { source: 'args', itemPrompt: '' };
     case 'parallel':
       return { source: 'args', itemVar: 'item', itemPrompt: '' };
+    case 'fanout':
+      return { mode: 'parallel', branches: [{ kind: 'thunk', prompt: '' }] };
     case 'branch':
       return { source: '', field: 'ok' };
     case 'loopUntilCheck':
