@@ -172,6 +172,34 @@ const pocPhases: WorkflowGraph = {
   ],
 };
 
+// --- draft-angles: static-array fan-out of independent angles (M10 fanout) ---
+const draftAngles: WorkflowGraph = {
+  version: 1,
+  meta: { name: 'Draft Angles', slug: 'draft-angles', description: 'Draft a plan from several angles concurrently, then merge' },
+  settings: {},
+  nodes: [
+    node({ id: 'meta', kind: 'workflow.meta', label: 'Draft Angles', position: P, data: { name: 'draft-angles', description: 'Draft a plan from several angles concurrently, then merge' } }),
+    node({
+      id: 'angles', kind: 'fanout', label: 'Draft angles', position: P,
+      data: {
+        mode: 'parallel',
+        branches: [
+          { kind: 'thunk', prompt: 'Draft the plan optimizing for speed.', label: 'speed' },
+          { kind: 'thunk', prompt: 'Draft the plan optimizing for safety.', label: 'safety' },
+          { kind: 'thunk', prompt: 'Draft the plan optimizing for cost.', label: 'cost' },
+        ],
+      },
+    }),
+    node({ id: 'merge', kind: 'agent', label: 'Merge', position: P, data: { prompt: 'Weigh the drafts in {{angles}} and pick the best synthesis.', label: 'merge' } }),
+    node({ id: 'ret', kind: 'output.return', label: 'return', position: P, data: { source: 'merge', transform: 'none' } }),
+  ],
+  edges: [
+    { id: 'e1', source: 'meta', target: 'angles' },
+    { id: 'e2', source: 'angles', target: 'merge' },
+    { id: 'e3', source: 'merge', target: 'ret' },
+  ],
+};
+
 export interface Template {
   slug: string;
   title: string;
@@ -186,4 +214,5 @@ export const TEMPLATES: Template[] = [
   { slug: 'grade-prs', title: 'Grade PRs (args pipeline)', graph: gradePrs },
   { slug: 'review-dims', title: 'Review Dims (parallel)', graph: reviewDims },
   { slug: 'poc-phases', title: 'PoC Phases (phase groups + branch)', graph: pocPhases },
+  { slug: 'draft-angles', title: 'Draft Angles (static fan-out)', graph: draftAngles },
 ];

@@ -3,7 +3,7 @@
 import type { GeneratedFile } from '../schema/types.js';
 import type { WorkflowGraph } from '../schema/graph.js';
 import type {
-  WorkflowNode, NodeKind, AgentData, PipelineData, ParallelData, LoopUntilCheckData, ReturnData, BranchData, RawData, PhaseData,
+  WorkflowNode, NodeKind, AgentData, PipelineData, ParallelData, LoopUntilCheckData, ReturnData, BranchData, RawData, PhaseData, FanoutData, FanoutBranch,
 } from '../schema/nodes.js';
 import { FIELD_PATH_RE } from '../schema/nodes.js';
 import { stableJson } from './json.js';
@@ -147,8 +147,14 @@ export function emitWorkflow(graph: WorkflowGraph): GeneratedFile {
  */
 export function buildWorkflow(graph: WorkflowGraph): { file: GeneratedFile; rawRegions: { start: number; end: number }[] } {
   const names = bindingNames(graph);
-  // Names declared by raw nodes — a typed prompt's {{ref}} to one emits `${name}`.
-  rawBindings = new Set(graph.nodes.flatMap((n) => (n.kind === 'raw' ? (n.data.produces ?? []) : [])));
+  // Bare-emitted binding names: those a raw node declares (`produces`) AND those a
+  // fanout's destructuring pattern introduces (`bindingPatternNames`). A typed prompt's
+  // {{ref}} to any of these emits the bare `${name}` the author wrote.
+  rawBindings = new Set(graph.nodes.flatMap((n) =>
+    n.kind === 'raw' ? (n.data.produces ?? [])
+      : n.kind === 'fanout' ? (n.data.bindingPatternNames ?? [])
+        : [],
+  ));
   const byId = nodeById(graph);
   const meta = graph.nodes.find((n) => n.kind === 'workflow.meta');
   const metaName = meta?.kind === 'workflow.meta' ? meta.data.name : graph.meta.slug;
@@ -329,6 +335,20 @@ function emitStatement(node: WorkflowNode, names: Map<string, string>, defaultMo
       // parallel(SOURCE.map(<v> => () => agent(...)))  — the corpus's dominant shape.
       return [exemptLine(`const ${bind} = await parallel(${sourceExpr}.map(${v} => () => ${inner}))`, 'agent(', d.itemPromptExpr)];
     }
+    case 'fanout': {
+      const d = node.data as FanoutData;
+      // The LHS binding: a verbatim destructuring pattern when present (`const [a,b] =`),
+      // else the derived single name. The concurrency call is `parallel(` for parallel/
+      // pipeline modes and `Promise.all(` for promiseAll.
+      const lhs = d.bindingPattern ?? names.get(node.id)!;
+      const fn = d.mode === 'promiseAll' ? 'Promise.all' : d.mode;
+      // Multi-line array form: one branch per line, each its own exempt-bearing Line
+      // (a branch line has at most one `agent(` so the per-line anchor mechanism holds).
+      const open = plain(`const ${lhs} = await ${fn}([`);
+      const branchLines = d.branches.map((b) => fanoutBranchLine(b, names, defaultModel));
+      const close = plain('])');
+      return [open, ...branchLines, close];
+    }
     case 'loopUntilCheck':
       return emitLoop(node.data as LoopUntilCheckData, names.get(node.id)!, names, defaultModel).map(plain);
     case 'output.return':
@@ -338,6 +358,27 @@ function emitStatement(node: WorkflowNode, names: Map<string, string>, defaultMo
     default:
       return [];
   }
+}
+
+/**
+ * One line of a `fanout` array (M10), indented two spaces and comma-terminated. A
+ * `map` branch emits `...<sourceExpr>.map(<itemVar> => () => agent(<arg>, {…})),`; a
+ * `thunk` branch emits `() => agent(<arg>, {…}),`. The verbatim promptExpr (if any) is
+ * self-lint-exempt, anchored on `agent(` exactly as the parallel/agent emitters do.
+ */
+function fanoutBranchLine(branch: FanoutBranch, names: Map<string, string>, defaultModel?: string): Line {
+  if (branch.kind === 'map') {
+    const v = branch.itemVar;
+    const sourceExpr = pipelineSource(branch.source, branch.sourceField, names);
+    const opts = agentOpts({ schema: branch.itemSchema, label: branch.itemLabel, model: branch.model ?? defaultModel, extraOpts: branch.extraOpts }, names, { [v]: v });
+    const arg = promptArg(branch.itemPromptExpr, branch.itemPrompt, names, { [v]: v });
+    const inner = opts ? `agent(${arg}, ${opts})` : `agent(${arg})`;
+    return exemptLine(`  ...${sourceExpr}.map(${v} => () => ${inner}),`, 'agent(', branch.itemPromptExpr);
+  }
+  const opts = agentOpts({ schema: branch.schema, label: branch.label, model: branch.model ?? defaultModel, extraOpts: branch.extraOpts }, names);
+  const arg = promptArg(branch.promptExpr, branch.prompt, names);
+  const inner = opts ? `agent(${arg}, ${opts})` : `agent(${arg})`;
+  return exemptLine(`  () => ${inner},`, 'agent(', branch.promptExpr);
 }
 
 /** The source-array expression for a pipeline/parallel: `args`, a node binding, or

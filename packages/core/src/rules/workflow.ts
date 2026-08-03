@@ -181,6 +181,13 @@ const cf605: Rule = {
         rawBinding.set(name, Math.min(rawBinding.get(name) ?? Infinity, rank.get(r.id) ?? Infinity));
       }
     }
+    // A fanout with a destructuring pattern (`const [a,b] = await parallel([…])`)
+    // introduces bare names too — a downstream {{a}} resolves against them (M10).
+    for (const fo of nodesOfKind(graph, 'fanout')) {
+      for (const name of fo.data.bindingPatternNames ?? []) {
+        rawBinding.set(name, Math.min(rawBinding.get(name) ?? Infinity, rank.get(fo.id) ?? Infinity));
+      }
+    }
     const diags: Diagnostic[] = [];
     const staticLocals: Record<string, Set<string>> = {
       pipeline: new Set(['item']),
@@ -621,7 +628,46 @@ const cf619: Rule = {
   },
 };
 
+const cf621: Rule = {
+  id: 'CF621',
+  severity: 'error',
+  run(graph) {
+    return nodesOfKind(graph, 'fanout')
+      .filter((n) => n.data.branches.length === 0)
+      .map((n): Diagnostic => ({
+        ruleId: 'CF621', severity: 'error', nodeId: n.id,
+        message: 'fanout has no branches (would emit an empty parallel([])).',
+        docsUrl: DOCS_URLS.workflows,
+      }));
+  },
+};
+
+const cf622: Rule = {
+  id: 'CF622',
+  severity: 'error',
+  run(graph) {
+    const diags: Diagnostic[] = [];
+    for (const n of nodesOfKind(graph, 'fanout')) {
+      n.data.branches.forEach((b, i) => {
+        // A branch's agent needs a prompt: a thunk needs prompt|promptExpr; a map
+        // branch needs itemPrompt|itemPromptExpr. Empty-string counts as missing.
+        const has = b.kind === 'thunk'
+          ? (b.prompt?.trim() || b.promptExpr?.trim())
+          : (b.itemPrompt?.trim() || b.itemPromptExpr?.trim());
+        if (!has) {
+          diags.push({
+            ruleId: 'CF622', severity: 'error', nodeId: n.id,
+            message: `fanout branch ${i + 1} (${b.kind}) has no prompt.`,
+            docsUrl: DOCS_URLS.workflows,
+          });
+        }
+      });
+    }
+    return diags;
+  },
+};
+
 export const workflowRules: Rule[] = [
   cf601, cf602, cf604, cf605, cf606, cf607, cf608, cf609, cf610, cf611, cf613, cf614, cf615, cf616,
-  cf617, cf618, cf619, cf620,
+  cf617, cf618, cf619, cf620, cf621, cf622,
 ];

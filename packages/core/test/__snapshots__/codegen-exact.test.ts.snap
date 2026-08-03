@@ -14,6 +14,13 @@ exports[`codegen output is byte-exact against committed fixtures > branch-review
 ]
 `;
 
+exports[`codegen output is byte-exact against committed fixtures > draft-angles: emits exactly the committed file set 1`] = `
+[
+  ".claude/workflows/draft-angles.js",
+  "draft-angles.clauflow.json",
+]
+`;
+
 exports[`codegen output is byte-exact against committed fixtures > grade-prs: emits exactly the committed file set 1`] = `
 [
   ".claude/workflows/grade-prs.js",

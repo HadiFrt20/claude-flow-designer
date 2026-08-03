@@ -108,6 +108,55 @@ export const parallelDataSchema = z.object({
 });
 
 /**
+ * One lane of a `fanout` (M10). A static-array `parallel([ … ])` is heterogeneous: each
+ * element is either a literal thunk `() => agent(prompt, opts)` (a `thunk` branch) or a
+ * spread `...SOURCE.map(v => () => agent(...))` (a `map` branch). A branch is an emission
+ * template — codegen re-emits it in place, so a fanout round-trips exactly. Discriminated
+ * on `kind`.
+ */
+export const fanoutBranchSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('thunk'),
+    prompt: z.string().optional(), // template prompt (may contain upstream {{refs}})
+    promptExpr: z.string().optional(), // OR a verbatim JS prompt expression
+    label: z.string().optional(),
+    schema: jsonSchemaShape.optional(),
+    model: z.string().optional(),
+    extraOpts: extraOptsSchema.optional(),
+  }),
+  z.object({
+    kind: z.literal('map'),
+    source: resultRefSchema, // the mapped array: a node id, 'args', or a raw-declared binding
+    sourceField: fieldPathSchema.optional(),
+    itemVar: z.string().default('item'), // the .map param name (verbatim)
+    itemPrompt: z.string().optional(), // per-item template prompt; may contain {{<itemVar>}}
+    itemPromptExpr: z.string().optional(), // OR a verbatim JS prompt expression
+    itemLabel: z.string().optional(),
+    itemSchema: jsonSchemaShape.optional(),
+    model: z.string().optional(),
+    extraOpts: extraOptsSchema.optional(),
+  }),
+]);
+
+/**
+ * The static-array concurrency form (M10): `const <bind> = await parallel([ … ])`, whose
+ * array merges literal thunks and `...map()` spreads into one concurrent group — the shape
+ * the single-source `parallel` kind cannot express. Renders as a titled container with one
+ * lane per branch (a `map` lane is `× <source>`, dynamic width; a `thunk` lane is concrete).
+ * `mode` is `parallel` (concurrent; also models `Promise.all`) or `pipeline`.
+ */
+export const fanoutDataSchema = z.object({
+  mode: z.enum(['parallel', 'pipeline', 'promiseAll']).default('parallel'),
+  branches: z.array(fanoutBranchSchema),
+  // When the call binds a DESTRUCTURING pattern (`const [a, b] = await …`) rather than
+  // a single name, the verbatim LHS pattern text (e.g. "[factorResults, discovered]").
+  // Codegen emits it as-is; `bindingPatternNames` lists the names it introduces so
+  // downstream refs resolve. Absent → the node uses its derived single binding name.
+  bindingPattern: z.string().optional(),
+  bindingPatternNames: z.array(z.string()).optional(),
+});
+
+/**
  * Conditional; two labeled outgoing edges (`then`/`else`). The condition is EITHER
  * structured (`source` + `field` + `negate?`, the authoring path) OR a verbatim JS
  * expression (`condExpr` — the M9 import/visualization path, mirroring agent.promptExpr):
@@ -172,6 +221,7 @@ export const workflowNodeSchema = z.discriminatedUnion('kind', [
   node('agent', agentDataSchema),
   node('pipeline', pipelineDataSchema),
   node('parallel', parallelDataSchema),
+  node('fanout', fanoutDataSchema),
   node('branch', branchDataSchema),
   node('loopUntilCheck', loopUntilCheckDataSchema),
   node('output.return', returnDataSchema),
@@ -183,7 +233,7 @@ export type NodeKind = WorkflowNode['kind'];
 
 /** All node kinds, for exhaustiveness checks and edge-compatibility tables. */
 export const NODE_KINDS = [
-  'workflow.meta', 'phase', 'agent', 'pipeline', 'parallel', 'branch', 'loopUntilCheck', 'output.return', 'raw',
+  'workflow.meta', 'phase', 'agent', 'pipeline', 'parallel', 'fanout', 'branch', 'loopUntilCheck', 'output.return', 'raw',
 ] as const satisfies readonly NodeKind[];
 
 // Narrowed data types (handy for rule + codegen code).
@@ -192,6 +242,8 @@ export type PhaseData = z.infer<typeof phaseDataSchema>;
 export type AgentData = z.infer<typeof agentDataSchema>;
 export type PipelineData = z.infer<typeof pipelineDataSchema>;
 export type ParallelData = z.infer<typeof parallelDataSchema>;
+export type FanoutData = z.infer<typeof fanoutDataSchema>;
+export type FanoutBranch = z.infer<typeof fanoutBranchSchema>;
 export type BranchData = z.infer<typeof branchDataSchema>;
 export type LoopUntilCheckData = z.infer<typeof loopUntilCheckDataSchema>;
 export type ReturnData = z.infer<typeof returnDataSchema>;

@@ -14,4 +14,4 @@ export type RuleId =
   // workflow script
   | 'CF601' | 'CF602' | 'CF604' | 'CF605' | 'CF606' | 'CF607' | 'CF608'
   | 'CF609' | 'CF610' | 'CF611' | 'CF613' | 'CF614' | 'CF615' | 'CF616'
-  | 'CF617' | 'CF618' | 'CF619' | 'CF620';
+  | 'CF617' | 'CF618' | 'CF619' | 'CF620' | 'CF621' | 'CF622';

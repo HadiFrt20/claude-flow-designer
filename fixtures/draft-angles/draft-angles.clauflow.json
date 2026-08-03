@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "meta": {
+    "name": "Draft Angles",
+    "slug": "draft-angles",
+    "description": "Draft a plan from several angles concurrently, then merge"
+  },
+  "settings": {},
+  "nodes": [
+    {
+      "id": "meta",
+      "kind": "workflow.meta",
+      "label": "Draft Angles",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "name": "draft-angles",
+        "description": "Draft a plan from several angles concurrently, then merge"
+      }
+    },
+    {
+      "id": "angles",
+      "kind": "fanout",
+      "label": "Draft angles",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "mode": "parallel",
+        "branches": [
+          {
+            "kind": "thunk",
+            "prompt": "Draft the plan optimizing for speed.",
+            "label": "speed"
+          },
+          {
+            "kind": "thunk",
+            "prompt": "Draft the plan optimizing for safety.",
+            "label": "safety"
+          },
+          {
+            "kind": "thunk",
+            "prompt": "Draft the plan optimizing for cost.",
+            "label": "cost"
+          }
+        ]
+      }
+    },
+    {
+      "id": "merge",
+      "kind": "agent",
+      "label": "Merge",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "prompt": "Weigh the drafts in {{angles}} and pick the best synthesis.",
+        "label": "merge"
+      }
+    },
+    {
+      "id": "ret",
+      "kind": "output.return",
+      "label": "return",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "source": "merge",
+        "transform": "none"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "meta",
+      "target": "angles"
+    },
+    {
+      "id": "e2",
+      "source": "angles",
+      "target": "merge"
+    },
+    {
+      "id": "e3",
+      "source": "merge",
+      "target": "ret"
+    }
+  ]
+}

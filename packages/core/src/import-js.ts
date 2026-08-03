@@ -8,7 +8,7 @@
 // graph; the .clauflow.json sidecar is a derived projection, not a user artifact.
 import * as acorn from 'acorn';
 import type { WorkflowGraph, Edge } from './schema/graph.js';
-import type { WorkflowNode, AgentData, PipelineData, ParallelData, ReturnData, RawData } from './schema/nodes.js';
+import type { WorkflowNode, AgentData, PipelineData, ParallelData, ReturnData, RawData, FanoutData, FanoutBranch } from './schema/nodes.js';
 
 const POS = { x: 0, y: 0 }; // canvas auto-layout assigns real positions on load
 
@@ -427,15 +427,32 @@ export function parseWorkflowJs(source: string, slug = 'imported'): WorkflowGrap
   // `parentId` is the enclosing phase (M9); `topLevel` gates comment capture.
   const parseStatement = (stmt: Node, parentId: string | undefined, topLevel: boolean): string | null => {
     // const x = await agent(...) | await pipeline(...) | await parallel(...)
+    // const [a, b] = await parallel([...]) | await Promise.all([...])  (fanout, M10)
     if (stmt.type === 'VariableDeclaration') {
       const decls = stmt.declarations as { id: Node; init?: Node }[];
       const d = decls.length === 1 ? decls[0] : undefined;
       const init = d?.init;
-      if (d && d.id.type === 'Identifier' && init?.type === 'AwaitExpression' && (stmt.kind as string) === 'const') {
+      if (d && init?.type === 'AwaitExpression' && (stmt.kind as string) === 'const') {
         const call = as<{ argument: Node }>(init).argument;
-        const bind = as<{ name: string }>(d.id).name;
-        const typed = tryTypedCall(call, bind, source, refs, freshId);
-        if (typed) { refs.node.add(bind); return push(typed, parentId); }
+        // Single-name binding: agent/pipeline/parallel/fanout all supported.
+        if (d.id.type === 'Identifier') {
+          const bind = as<{ name: string }>(d.id).name;
+          const typed = tryTypedCall(call, bind, source, refs, freshId);
+          if (typed) { refs.node.add(bind); return push(typed, parentId); }
+        } else if (d.id.type === 'ArrayPattern' || d.id.type === 'ObjectPattern') {
+          // Destructured binding — only a fanout (static-array parallel / Promise.all)
+          // supports it; codegen re-emits the verbatim LHS pattern (M10).
+          const fan = tryFanoutCall(call, source, refs);
+          if (fan) {
+            const patternNames = declaredNames({ type: 'VariableDeclaration', kind: 'const', declarations: [{ id: d.id }] } as unknown as Node);
+            for (const nm of patternNames) refs.bare.add(nm); // downstream refs to a destructured name are bare
+            const patternText = source.slice(d.id.start, d.id.end);
+            return push({
+              id: freshId('fanout'), kind: 'fanout', label: labelForBinding('fanout'), position: POS,
+              data: { ...fan, bindingPattern: patternText, ...(patternNames.length ? { bindingPatternNames: patternNames } : {}) },
+            }, parentId);
+          }
+        }
       }
       return rawNode(stmt, parentId, topLevel);
     }
@@ -632,6 +649,12 @@ function tryTypedCall(
     return { id: freshId(bind), kind: 'pipeline', label: labelForBinding(bind), position: POS, data };
   }
 
+  // Static-array fanout: parallel([...]) or Promise.all([...]) (M10).
+  const fanFromArray = tryFanoutCall(call, src, refs);
+  if (fanFromArray) {
+    return { id: freshId(bind), kind: 'fanout', label: labelForBinding(bind), position: POS, data: fanFromArray };
+  }
+
   if (name === 'parallel') {
     // parallel(SOURCE.map(<v> => () => agent(prompt, opts)))
     if (args.length !== 1) return null;
@@ -665,6 +688,86 @@ function tryTypedCall(
 /** Map a promptField result to the pipeline/parallel item* field names. */
 function itemPromptFields(pf: { prompt: string } | { promptExpr: string }): { itemPrompt: string } | { itemPromptExpr: string } {
   return 'prompt' in pf ? { itemPrompt: pf.prompt } : { itemPromptExpr: pf.promptExpr };
+}
+
+/**
+ * Recognize a static-array concurrency call — `parallel([ … ])` (mode `parallel`) or
+ * `Promise.all([ … ])` (mode `promiseAll`) — and parse its array into FanoutData, or
+ * null if it isn't one (caller keeps it raw). The single-source `parallel(SRC.map())`
+ * form is NOT handled here (that's the `parallel` node kind).
+ */
+function tryFanoutCall(call: Node, src: string, refs: Refs): FanoutData | null {
+  if (call.type !== 'CallExpression') return null;
+  const callee = call.callee as Node;
+  const args = call.arguments as Node[];
+  let mode: FanoutData['mode'] | null = null;
+  if (callee.type === 'Identifier' && callee.name === 'parallel') mode = 'parallel';
+  else if (
+    callee.type === 'MemberExpression' && !(callee.computed as boolean) &&
+    callee.object.type === 'Identifier' && callee.object.name === 'Promise' &&
+    callee.property.type === 'Identifier' && callee.property.name === 'all'
+  ) mode = 'promiseAll';
+  if (mode === null) return null;
+  if (args.length !== 1 || (args[0] as Node).type !== 'ArrayExpression') return null;
+  return parseFanoutArray(args[0] as Node, mode, src, refs);
+}
+
+/**
+ * Parse a static-array `parallel([ … ])` into FanoutData (M10). Each element is either a
+ * literal thunk `() => agent(prompt, opts)` (→ a `thunk` branch) or a spread
+ * `...SOURCE.map(v => () => agent(...))` (→ a `map` branch). Returns null (→ caller keeps
+ * the call as raw) if ANY element is neither, so partial/unknown shapes never lose fidelity.
+ */
+function parseFanoutArray(arrayNode: Node, mode: FanoutData['mode'], src: string, refs: Refs): FanoutData | null {
+  const elements = arrayNode.elements as (Node | null)[];
+  if (elements.length === 0) return null; // empty array → keep raw (CF621 would flag it anyway)
+  const branches: FanoutBranch[] = [];
+  for (const el of elements) {
+    if (!el) return null; // hole in the array → give up
+    // Spread of a `.map(...)` → a map branch.
+    if (el.type === 'SpreadElement') {
+      const arg = as<{ argument: Node }>(el).argument;
+      if (arg.type !== 'CallExpression') return null;
+      const callee = arg.callee as Node;
+      if (callee.type !== 'MemberExpression' || (callee.computed as boolean)) return null;
+      if (as<{ name: string }>(as<{ property: Node }>(callee).property).name !== 'map') return null;
+      const sourceNode = as<{ object: Node }>(callee).object;
+      const p = parseMappedAgent(sourceNode, (arg.arguments as Node[])[0] as Node | undefined, src, refs, /*thunk*/ true);
+      if (!p) return null;
+      branches.push({
+        kind: 'map', source: p.source,
+        ...(p.sourceField ? { sourceField: p.sourceField } : {}),
+        itemVar: p.itemVar,
+        ...itemPromptFields(p.prompt),
+        ...(p.opts.label !== undefined ? { itemLabel: p.opts.label } : {}),
+        ...(p.opts.schema ? { itemSchema: p.opts.schema } : {}),
+        ...(p.opts.model ? { model: p.opts.model } : {}),
+        ...(p.opts.extraOpts ? { extraOpts: p.opts.extraOpts } : {}),
+      });
+      continue;
+    }
+    // A literal thunk `() => agent(...)` → a thunk branch.
+    if (el.type === 'ArrowFunctionExpression' && (as<{ params: Node[] }>(el).params).length === 0) {
+      let body = as<{ body: Node }>(el).body;
+      if (body.type === 'BlockStatement') return null; // only expression-body thunks
+      const innerCall = agentCall(body);
+      if (!innerCall) return null;
+      const pf = promptField((innerCall.arguments as Node[])[0] as Node | undefined, src, refs);
+      if (pf === null) return null;
+      const opts = parseAgentOpts((innerCall.arguments as Node[])[1] as Node | undefined, src, refs);
+      if (opts === null) return null;
+      branches.push({
+        kind: 'thunk', ...pf,
+        ...(opts.label !== undefined ? { label: opts.label } : {}),
+        ...(opts.schema ? { schema: opts.schema } : {}),
+        ...(opts.model ? { model: opts.model } : {}),
+        ...(opts.extraOpts ? { extraOpts: opts.extraOpts } : {}),
+      });
+      continue;
+    }
+    return null; // some other element shape → keep the whole call raw
+  }
+  return { mode, branches };
 }
 
 /**

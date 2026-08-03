@@ -532,6 +532,103 @@ describe('parseWorkflowJs — branch from a real if (M9)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// M10: static-array parallel([...]) fan-out + Promise.all + destructuring.
+// ---------------------------------------------------------------------------
+describe('parseWorkflowJs — fanout (M10)', () => {
+  it('types a heterogeneous parallel([thunk, ...map spread]) as a fanout with per-element lanes', () => {
+    const src = [
+      'export const meta = { name: "fan", description: "d" }',
+      'const items = await agent(`list`, { schema: { type: "object", properties: { files: { type: "array" } } } })',
+      'const out = await parallel([',
+      '  () => agent(`literal thunk`, { label: `t` }),',
+      '  ...items.files.map(f => () => agent(`do ${f}`, { label: `f` })),',
+      '])',
+      'return out',
+      '',
+    ].join('\n');
+    const g = parseWorkflowJs(src, 'fan')!;
+    const fo = g.nodes.find((n) => n.kind === 'fanout');
+    expect(fo, 'no fanout node').toBeDefined();
+    if (fo!.kind !== 'fanout') throw new Error('kind');
+    expect(fo!.data.mode).toBe('parallel');
+    expect(fo!.data.branches.map((b) => b.kind)).toEqual(['thunk', 'map']);
+    expect(() => generate(g)).not.toThrow();
+  });
+
+  it('round-trips a canonical fanout byte-identical', () => {
+    // Build the canonical source from a graph, then parse THAT back (emitter is the inverse).
+    const graph = {
+      version: 1 as const, meta: { name: 'fan', slug: 'fan' }, settings: {},
+      nodes: [
+        { id: 'm', kind: 'workflow.meta' as const, label: 'fan', position: { x: 0, y: 0 }, data: { name: 'fan', description: 'd' } },
+        { id: 'fo', kind: 'fanout' as const, label: 'fo', position: { x: 0, y: 0 }, data: { mode: 'parallel' as const, branches: [
+          { kind: 'thunk' as const, prompt: 'one', label: 'a' },
+          { kind: 'thunk' as const, prompt: 'two', label: 'b' },
+        ] } },
+        { id: 'ret', kind: 'output.return' as const, label: 'ret', position: { x: 0, y: 0 }, data: { source: 'fo', transform: 'none' as const } },
+      ],
+      edges: [{ id: 'e1', source: 'm', target: 'fo' }, { id: 'e2', source: 'fo', target: 'ret' }],
+    };
+    const src = jsOf(generate(graph));
+    expect(src).toContain('const fo = await parallel([');
+    expect(jsOf(generate(parseWorkflowJs(src, 'fan')!))).toBe(src);
+  });
+
+  it('recognizes Promise.all([...]) as a promiseAll-mode fanout', () => {
+    const src = [
+      'export const meta = { name: "pa", description: "d" }',
+      'const out = await Promise.all([',
+      '  () => agent(`x`, { label: `a` }),',
+      '  () => agent(`y`, { label: `b` }),',
+      '])',
+      'return out',
+      '',
+    ].join('\n');
+    const g = parseWorkflowJs(src, 'pa')!;
+    const fo = g.nodes.find((n) => n.kind === 'fanout');
+    expect(fo?.kind === 'fanout' && fo.data.mode).toBe('promiseAll');
+    expect(jsOf(generate(g))).toContain('await Promise.all([');
+  });
+
+  it('preserves a destructuring binding pattern (const [a, b] = await parallel([...]))', () => {
+    const src = [
+      'export const meta = { name: "de", description: "d" }',
+      'const [first, second] = await parallel([',
+      '  () => agent(`one`, { label: `a` }),',
+      '  () => agent(`two`, { label: `b` }),',
+      '])',
+      'return first',
+      '',
+    ].join('\n');
+    const g = parseWorkflowJs(src, 'de')!;
+    const fo = g.nodes.find((n) => n.kind === 'fanout');
+    if (fo?.kind !== 'fanout') throw new Error('no fanout');
+    expect(fo.data.bindingPattern).toBe('[first, second]');
+    expect(fo.data.bindingPatternNames).toEqual(['first', 'second']);
+    // re-emits the verbatim pattern + a downstream ref to a destructured name resolves
+    expect(jsOf(generate(g))).toContain('const [first, second] = await parallel([');
+    expect(() => generate(g)).not.toThrow();
+  });
+
+  it('keeps a parallel([...]) with an un-typeable element as raw (no fidelity loss)', () => {
+    // A pipeline(...) element (not a thunk/map spread) → whole call stays raw.
+    const src = [
+      'export const meta = { name: "cx", description: "d" }',
+      'const out = await Promise.all([',
+      '  pipeline(xs, x => agent(`x`), (r) => r),',
+      '  () => agent(`y`),',
+      '])',
+      'return out',
+      '',
+    ].join('\n');
+    const g = parseWorkflowJs(src, 'cx')!;
+    expect(g.nodes.some((n) => n.kind === 'fanout')).toBe(false);
+    expect(g.nodes.some((n) => n.kind === 'raw')).toBe(true);
+    expect(() => generate(g)).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Not-a-workflow inputs.
 // ---------------------------------------------------------------------------
 describe('parseWorkflowJs — non-workflows', () => {

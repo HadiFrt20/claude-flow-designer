@@ -15,6 +15,7 @@ import type {
   LoopUntilCheckData,
   ReturnData,
   RawData,
+  FanoutData,
 } from '../src/schema/nodes.js';
 
 const pos = { x: 0, y: 0 };
@@ -41,6 +42,9 @@ export const n = {
   }),
   phase: (id: string, data: { title: string }, label = id): WorkflowNode => ({
     id, kind: 'phase', label, position: pos, data,
+  }),
+  fanout: (id: string, data: FanoutData, label = id): WorkflowNode => ({
+    id, kind: 'fanout', label, position: pos, data,
   }),
   loop: (id: string, data: LoopUntilCheckData, label = id): WorkflowNode => ({
     id, kind: 'loopUntilCheck', label, position: pos, data,
@@ -341,6 +345,26 @@ export const fixtures: Record<RuleId, { hit: WorkflowGraph; miss: WorkflowGraph 
        n.agent('request', { prompt: 'Request.' }),
        n.ret('ret', { source: 'review', transform: 'none' })],
       [e('meta', 'review'), e('review', 'br'), e('br', 'approve', 'then'), e('br', 'request', 'else'), e('br', 'ret')],
+    ),
+    miss: valid(),
+  },
+  CF621: {
+    // A fanout with an empty branches array (would emit parallel([])).
+    hit: g(
+      [n.meta('meta', { name: 't', description: 'd' }),
+       n.fanout('fo', { mode: 'parallel', branches: [] }),
+       n.ret('ret', { source: 'fo', transform: 'none' })],
+      [e('meta', 'fo'), e('fo', 'ret')],
+    ),
+    miss: valid(),
+  },
+  CF622: {
+    // A fanout whose thunk branch has neither prompt nor promptExpr.
+    hit: g(
+      [n.meta('meta', { name: 't', description: 'd' }),
+       n.fanout('fo', { mode: 'parallel', branches: [{ kind: 'thunk', label: 'x' }] }),
+       n.ret('ret', { source: 'fo', transform: 'none' })],
+      [e('meta', 'fo'), e('fo', 'ret')],
     ),
     miss: valid(),
   },
