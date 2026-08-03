@@ -77,7 +77,9 @@ with explicit branch members** so the canvas can draw the lanes and codegen can 
 ## Out of scope (measured absent or low-value)
 - `while` loops / nested `for` loops wrapping agents (0 in corpus) — stay `raw`.
 - `.then()` as a standalone node (67, but pure per-item result-shaping) — stays inside the fan-out expr.
-- Deep `workflow()` sub-workflow features (0 in corpus) — minimal node only.
+- `subworkflow` / `workflow()` sub-workflow node — **DEFERRED, not built**: 0 corpus cases, so adding a
+  kind + codegen + rule + panel + fixture would be speculative over-building. Left as `raw` (it round-
+  trips verbatim) until a real case appears. (Earlier brief draft said "minimal node"; corrected to 0.)
 
 ## Acceptance
 - Corpus re-run: the 57 agents currently hidden in static-array `parallel([...])` are now visible as

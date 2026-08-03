@@ -45,6 +45,7 @@ return <expr>
 | `agent` | `const <bind> = await agent(<promptArg>, { schema?, label?, model?, …extraOpts })` |
 | `pipeline` | `const <bind> = await pipeline(<sourceExpr>, item => agent(<promptArg>, { label?, schema?, model?, …extraOpts }))` |
 | `parallel` | `const <bind> = await parallel(<sourceExpr>.map(<itemVar> => () => agent(<promptArg>, { … })))` (concurrent fan-out) |
+| `fanout` | `const <bind> = await parallel([ <branch>, … ])` (mode `parallel`) — each `<branch>` is `...<sourceExpr>.map(<itemVar> => () => agent(<promptArg>, {…}))` for a `map` branch or `() => agent(<promptArg>, {…})` for a `thunk` branch, emitted in `branches` order |
 | `branch` | `if (<cond>) { <then-arm, topo order> } [else { <else-arm> }]`; `<cond>` = verbatim `condExpr` when set (self-lint-exempt, like `promptExpr`), else `<sourceBind>.<field>` (or `!…` if `negate`). A `condExpr` branch may omit the `else` clause |
 | `loopUntilCheck` | a bounded `while` (see below) |
 | `output.return` | `return <expr>;` — the last statement; exactly one |

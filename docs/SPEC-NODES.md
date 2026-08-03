@@ -63,12 +63,13 @@ interpolations against binding names:
 | `{{item}}` | (inside `pipeline`) the current item |
 | `{{check}}` | (inside `loopUntilCheck` fixPrompt) the checker's result |
 
-### The nine kinds
+### The ten kinds
 
 | kind | data | compiles to |
 |---|---|---|
 | `workflow.meta` | name, description, argsHint? | `export const meta = { name, description }` (unique root) |
 | `phase` | title | `phase(<title>)` marker; groups the nodes whose `parentId` is this node (M9) |
+| `fanout` | mode: 'parallel'\|'pipeline', binding?, branches: FanoutBranch[] | `const <bind> = await parallel([ …branch thunks / …map spreads ])` (M10) — a heterogeneous concurrent group |
 | `agent` | prompt, schema? (JSON-Schema object), label?, model?, extraOpts? | `const <bind> = await agent(`…`, { schema?, label?, model?, …extraOpts })` |
 | `pipeline` | source (resultRef), sourceField? (list field), itemPrompt, itemLabel?, itemSchema?, model?, extraOpts? | `const <bind> = await pipeline(<sourceExpr>, item => agent(`…`, { … }))` |
 | `parallel` | source (resultRef), sourceField?, itemVar='item', itemPrompt, itemLabel?, itemSchema?, model?, extraOpts? | `const <bind> = await parallel(<sourceExpr>.map(<itemVar> => () => agent(`…`, { … })))` |
@@ -94,6 +95,19 @@ Notes:
 - `parallel` (M8) is the corpus's dominant concurrency primitive — `parallel(ARRAY.map(v => () =>
   agent(...)))`, one agent per item run concurrently. It preserves the `.map` param name (`itemVar`,
   not always `item`) so it round-trips exactly. Same list-source rules as `pipeline` (CF607).
+- `fanout` (M10) models the **static-array** concurrency form `parallel([ … ])`, which `parallel`
+  (single mapped source) cannot express: its array is HETEROGENEOUS — each element is either a literal
+  thunk `() => agent(prompt, opts)` or a spread `...SOURCE.map(v => () => agent(...))`, and several may
+  be merged into one concurrent group. It renders as a titled container with **one lane per branch**
+  (a `map` branch's lane is labelled `× <source>` since its width is runtime-dynamic; a `thunk` branch
+  is one concrete lane), making the real fan-out visible instead of collapsing 2–16 concurrent agents
+  into one box. `branches: FanoutBranch[]` where each branch is one of:
+  - `{ kind: 'map', source, sourceField?, itemVar, itemPrompt|itemPromptExpr, itemLabel?, itemSchema?, model?, extraOpts? }` — a `...SRC.map(v => () => agent())` spread.
+  - `{ kind: 'thunk', prompt|promptExpr, label?, schema?, model?, extraOpts? }` — a literal `() => agent()`.
+  `mode` is `parallel` (concurrent; also models `Promise.all`) or `pipeline`. Produces one `const`
+  binding (`binding` name preserved on round-trip). The existing single-source `parallel`/`pipeline`
+  kinds are unchanged (they still handle `parallel(SRC.map(...))` and `pipeline(...)`); `fanout` covers
+  only the array form those two can't represent.
 - `extraOpts` (M8) is a passthrough map of undocumented-but-real agent opts (`phase`, `effort`,
   `agentType`, …) whose values are verbatim JS source, emitted after the modeled opts. It lets a real
   hand-authored `agent(prompt, { label, phase, effort })` type instead of falling to `raw`.
