@@ -76,6 +76,13 @@ function promptsOf(node: WorkflowNode): { field: string; text: string }[] {
     case 'agent': return node.data.prompt !== undefined ? [{ field: 'prompt', text: node.data.prompt }] : [];
     case 'pipeline': return node.data.itemPrompt !== undefined ? [{ field: 'itemPrompt', text: node.data.itemPrompt }] : [];
     case 'parallel': return node.data.itemPrompt !== undefined ? [{ field: 'itemPrompt', text: node.data.itemPrompt }] : [];
+    case 'fanout':
+      // Each branch's template prompt (thunk.prompt / map.itemPrompt); promptExpr
+      // branches contribute nothing (no {{refs}}). Field names index the branch.
+      return node.data.branches.flatMap((b, i) => {
+        const text = b.kind === 'thunk' ? b.prompt : b.itemPrompt;
+        return text !== undefined ? [{ field: `branches.${i}.${b.kind === 'thunk' ? 'prompt' : 'itemPrompt'}`, text }] : [];
+      });
     case 'loopUntilCheck':
       return [
         { field: 'checkPrompt', text: node.data.checkPrompt },
@@ -195,9 +202,13 @@ const cf605: Rule = {
     };
     for (const n of graph.nodes) {
       // parallel's per-item local is its own itemVar (d/c/t/…), not a fixed name.
+      // fanout's locals are the itemVars of its map branches (a {{itemVar}} in a lane
+      // prompt resolves to that lane's map param, emitted bare).
       const allowedLocal = n.kind === 'parallel'
         ? new Set([n.data.itemVar])
-        : (staticLocals[n.kind] ?? new Set<string>());
+        : n.kind === 'fanout'
+          ? new Set(n.data.branches.flatMap((b) => (b.kind === 'map' ? [b.itemVar] : [])))
+          : (staticLocals[n.kind] ?? new Set<string>());
       for (const { field, text } of promptsOf(n)) {
         for (const ref of refsIn(text)) {
           // The field part is interpolated raw into JS — it must be a dotted-
@@ -315,6 +326,21 @@ const cf607: Rule = {
           diags.push({ ruleId: 'CF607', severity: 'error', nodeId: p.id, field: 'sourceField', message: `${p.kind}.sourceField "${d.sourceField}" has schema type "${fieldType}", not array.`, docsUrl: DOCS_URLS.workflows });
         }
       }
+    }
+    // A fanout `map` branch fans over a source array too (M10). Same best-effort check
+    // per branch: a schema-bearing agent source whose selected field isn't an array.
+    for (const fo of nodesOfKind(graph, 'fanout')) {
+      fo.data.branches.forEach((b, i) => {
+        if (b.kind !== 'map' || b.source === 'args') return;
+        const src = byId.get(b.source);
+        if (!src || src.kind !== 'agent' || !src.data.schema) return;
+        const props = (src.data.schema as { properties?: Record<string, { type?: string }> }).properties;
+        if (!b.sourceField) return; // a map without sourceField maps the source directly
+        const fieldType = props?.[b.sourceField.split('.')[0]!]?.type;
+        if (fieldType && fieldType !== 'array') {
+          diags.push({ ruleId: 'CF607', severity: 'error', nodeId: fo.id, field: `branches.${i}.sourceField`, message: `fanout branch ${i + 1} sourceField "${b.sourceField}" has schema type "${fieldType}", not array.`, docsUrl: DOCS_URLS.workflows });
+        }
+      });
     }
     return diags;
   },

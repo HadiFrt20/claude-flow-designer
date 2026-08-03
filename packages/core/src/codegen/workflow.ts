@@ -341,7 +341,7 @@ function emitStatement(node: WorkflowNode, names: Map<string, string>, defaultMo
       // else the derived single name. The concurrency call is `parallel(` for parallel/
       // pipeline modes and `Promise.all(` for promiseAll.
       const lhs = d.bindingPattern ?? names.get(node.id)!;
-      const fn = d.mode === 'promiseAll' ? 'Promise.all' : d.mode;
+      const fn = d.mode === 'promiseAll' ? 'Promise.all' : 'parallel';
       // Multi-line array form: one branch per line, each its own exempt-bearing Line
       // (a branch line has at most one `agent(` so the per-line anchor mechanism holds).
       const open = plain(`const ${lhs} = await ${fn}([`);

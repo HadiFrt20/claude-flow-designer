@@ -69,7 +69,7 @@ interpolations against binding names:
 |---|---|---|
 | `workflow.meta` | name, description, argsHint? | `export const meta = { name, description }` (unique root) |
 | `phase` | title | `phase(<title>)` marker; groups the nodes whose `parentId` is this node (M9) |
-| `fanout` | mode: 'parallel'\|'pipeline', binding?, branches: FanoutBranch[] | `const <bind> = await parallel([ …branch thunks / …map spreads ])` (M10) — a heterogeneous concurrent group |
+| `fanout` | mode: 'parallel'\|'promiseAll', branches: FanoutBranch[], bindingPattern?, bindingPatternNames? | `const <bind> = await parallel([ … ])` / `await Promise.all([ … ])` (M10) — a heterogeneous concurrent group |
 | `agent` | prompt, schema? (JSON-Schema object), label?, model?, extraOpts? | `const <bind> = await agent(`…`, { schema?, label?, model?, …extraOpts })` |
 | `pipeline` | source (resultRef), sourceField? (list field), itemPrompt, itemLabel?, itemSchema?, model?, extraOpts? | `const <bind> = await pipeline(<sourceExpr>, item => agent(`…`, { … }))` |
 | `parallel` | source (resultRef), sourceField?, itemVar='item', itemPrompt, itemLabel?, itemSchema?, model?, extraOpts? | `const <bind> = await parallel(<sourceExpr>.map(<itemVar> => () => agent(`…`, { … })))` |
@@ -104,10 +104,14 @@ Notes:
   into one box. `branches: FanoutBranch[]` where each branch is one of:
   - `{ kind: 'map', source, sourceField?, itemVar, itemPrompt|itemPromptExpr, itemLabel?, itemSchema?, model?, extraOpts? }` — a `...SRC.map(v => () => agent())` spread.
   - `{ kind: 'thunk', prompt|promptExpr, label?, schema?, model?, extraOpts? }` — a literal `() => agent()`.
-  `mode` is `parallel` (concurrent; also models `Promise.all`) or `pipeline`. Produces one `const`
-  binding (`binding` name preserved on round-trip). The existing single-source `parallel`/`pipeline`
-  kinds are unchanged (they still handle `parallel(SRC.map(...))` and `pipeline(...)`); `fanout` covers
-  only the array form those two can't represent.
+  `mode` is `parallel` (`parallel([…])`) or `promiseAll` (`Promise.all([…])`) — both run every lane
+  concurrently; the mode only records which primitive the author wrote so it round-trips. (A per-item
+  `pipeline(items, fn)` is the separate `pipeline` kind, NOT a fanout mode.) A fanout normally produces
+  one `const` binding; when the source destructures (`const [a, b] = await parallel([…])`) the verbatim
+  LHS is preserved in `bindingPattern` and the names it introduces in `bindingPatternNames` (resolved as
+  bare bindings). A destructured fanout produces no single node-id binding (CF605 flags a node-id ref to
+  it). The existing single-source `parallel`/`pipeline` kinds are unchanged (they still handle
+  `parallel(SRC.map(...))` and `pipeline(...)`); `fanout` covers only the array form those can't represent.
 - `extraOpts` (M8) is a passthrough map of undocumented-but-real agent opts (`phase`, `effort`,
   `agentType`, …) whose values are verbatim JS source, emitted after the modeled opts. It lets a real
   hand-authored `agent(prompt, { label, phase, effort })` type instead of falling to `raw`.

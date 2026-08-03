@@ -73,7 +73,8 @@ export const FIELD_DESCRIPTORS: Record<NodeKind, FieldDescriptor[]> = {
     MODEL,
   ],
   fanout: [
-    { key: 'mode', label: 'Mode', type: 'select', group: 'Basic', options: ['parallel', 'pipeline', 'promiseAll'], hint: 'parallel/Promise.all run the lanes concurrently; pipeline runs one per item.' },
+    { key: 'mode', label: 'Concurrency call', type: 'select', group: 'Basic', options: ['parallel', 'promiseAll'], hint: 'parallel([…]) or Promise.all([…]) — both run every lane concurrently.' },
+    { key: 'branches', label: 'Branches (lanes)', type: 'json', group: 'Basic', hint: 'One lane per element. Each: {kind:"thunk", prompt} or {kind:"map", source, itemVar, itemPrompt}. Edited as JSON.' },
     { key: 'bindingPattern', label: 'Binding pattern', type: 'text', group: 'Advanced', hint: 'A destructuring LHS (e.g. [a, b]) preserved verbatim from import; blank = a single derived name.' },
   ],
   branch: [

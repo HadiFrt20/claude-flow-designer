@@ -11,6 +11,11 @@ const BINDING_KINDS: ReadonlySet<NodeKind> = new Set([
 ]);
 
 export function producesBinding(node: WorkflowNode): boolean {
+  // A fanout with a destructuring pattern binds NO single referenceable name — its
+  // names are the destructured ones (tracked as bare bindings, resolved by their name,
+  // not the node id). So a node-id ref to it produces no binding (CF605 flags it as
+  // such — a user-facing gate — instead of self-lint crashing on the unbound name; M2).
+  if (node.kind === 'fanout' && node.data.bindingPattern !== undefined) return false;
   return BINDING_KINDS.has(node.kind);
 }
 

@@ -146,7 +146,10 @@ export const fanoutBranchSchema = z.discriminatedUnion('kind', [
  * `mode` is `parallel` (concurrent; also models `Promise.all`) or `pipeline`.
  */
 export const fanoutDataSchema = z.object({
-  mode: z.enum(['parallel', 'pipeline', 'promiseAll']).default('parallel'),
+  // The concurrency call: `parallel([...])` or `Promise.all([...])`. Both run the lanes
+  // concurrently — the only difference is which primitive the author wrote (round-trip).
+  // (A per-item `pipeline(items, fn)` is the separate `pipeline` kind, NOT a fanout mode.)
+  mode: z.enum(['parallel', 'promiseAll']).default('parallel'),
   branches: z.array(fanoutBranchSchema),
   // When the call binds a DESTRUCTURING pattern (`const [a, b] = await …`) rather than
   // a single name, the verbatim LHS pattern text (e.g. "[factorResults, discovered]").

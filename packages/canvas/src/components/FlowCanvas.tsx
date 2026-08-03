@@ -156,7 +156,6 @@ function FanoutNode({ data }: { data: NodeData }) {
   const accent = ACCENT.pipeline; // fan-out family accent
   const dotStyle = { width: 8, height: 8, background: accent, border: 'none' };
   const branches = node.data.branches;
-  const concurrent = node.data.mode !== 'pipeline';
   const rowH = 16;
   const shown = branches.slice(0, 6); // cap the drawn lanes; note overflow below
   return (
@@ -181,7 +180,7 @@ function FanoutNode({ data }: { data: NodeData }) {
       </div>
       <div style={{ fontWeight: 600 }}>{node.label || '(unnamed)'}</div>
       <div style={{ fontSize: '0.68em', color: accent, marginTop: SPACE(1), fontFamily: TOKENS.monoFont }}>
-        {concurrent ? '⇉ concurrent' : '→ sequential'} · {branches.length} {branches.length === 1 ? 'lane' : 'lanes'}
+        ⇉ concurrent · {branches.length} {branches.length === 1 ? 'lane' : 'lanes'}
         {node.data.mode === 'promiseAll' ? ' (Promise.all)' : ''}
       </div>
       {/* one row per branch: source dot forking to each lane */}

@@ -362,3 +362,50 @@ describe('CF613 covers the graph-level default model', () => {
     expect(idsFor(graph)).not.toContain('CF613');
   });
 });
+
+// M10 fanout: branch-prompt refs + destructured-binding node-id ref (review B2/M2).
+describe('fanout rules (M10)', () => {
+  it('CF605 flags an unknown template ref inside a fanout branch prompt', () => {
+    const graph = g(
+      [n.meta('meta', { name: 't', description: 'd' }),
+       n.fanout('fo', { mode: 'parallel', branches: [{ kind: 'thunk', prompt: 'use {{nope}} here' }] }),
+       n.ret('ret', { source: 'fo', transform: 'none' })],
+      [e('meta', 'fo'), e('fo', 'ret')],
+    );
+    expect(idsFor(graph)).toContain('CF605');
+  });
+
+  it('CF605 allows a map branch itemVar ref in that branch prompt', () => {
+    const graph = g(
+      [n.meta('meta', { name: 't', description: 'd' }),
+       n.agent('list', { prompt: 'list', schema: { type: 'object', properties: { xs: { type: 'array' } } } }),
+       n.fanout('fo', { mode: 'parallel', branches: [{ kind: 'map', source: 'list', sourceField: 'xs', itemVar: 'x', itemPrompt: 'do {{x}}' }] }),
+       n.ret('ret', { source: 'fo', transform: 'none' })],
+      [e('meta', 'list'), e('list', 'fo'), e('fo', 'ret')],
+    );
+    expect(idsFor(graph)).not.toContain('CF605');
+  });
+
+  it('CF605 flags a node-id ref to a DESTRUCTURED fanout (it produces no single binding)', () => {
+    const graph = g(
+      [n.meta('meta', { name: 't', description: 'd' }),
+       n.fanout('fo', { mode: 'parallel', bindingPattern: '[a, b]', bindingPatternNames: ['a', 'b'], branches: [{ kind: 'thunk', prompt: 'one' }, { kind: 'thunk', prompt: 'two' }] }),
+       n.agent('use', { prompt: 'read {{fo}}' }), // {{fo}} = the fanout node id, which has no single binding
+       n.ret('ret', { source: 'use', transform: 'none' })],
+      [e('meta', 'fo'), e('fo', 'use'), e('use', 'ret')],
+    );
+    expect(idsFor(graph)).toContain('CF605');
+  });
+
+  it('a destructured fanout referenced by its bare pattern name resolves cleanly + generates', () => {
+    const graph = g(
+      [n.meta('meta', { name: 't', description: 'd' }),
+       n.fanout('fo', { mode: 'parallel', bindingPattern: '[a, b]', bindingPatternNames: ['a', 'b'], branches: [{ kind: 'thunk', prompt: 'one' }, { kind: 'thunk', prompt: 'two' }] }),
+       n.agent('use', { prompt: 'read {{a}} and {{b}}' }),
+       n.ret('ret', { source: 'use', transform: 'none' })],
+      [e('meta', 'fo'), e('fo', 'use'), e('use', 'ret')],
+    );
+    expect(idsFor(graph)).not.toContain('CF605');
+    expect(validateGraph(graph).filter((d) => d.severity === 'error')).toEqual([]);
+  });
+});
