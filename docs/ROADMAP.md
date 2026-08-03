@@ -93,19 +93,20 @@
       0 CF609/618/620; round-trip fixpoint holds across the corpus; code-reviewer APPROVE (round 2).
 
 ## M10 — Real runtime model (static-array parallel fan-out)
-- [ ] `fanout` node kind (mode + `FanoutBranch[]` of thunk/map lanes) — models `parallel([ …thunks /
-      …map spreads ])`, the static-array form the single-source `parallel` kind can't express (18
-      corpus calls hiding 57 concurrent agents, previously raw).
-- [ ] Parser: type `parallel([...])` (literal thunks + `...SRC.map()` spreads + merged arrays) into a
-      `fanout`; recurse into fan-out/`.then()` callback bodies so a nested `if`-gating-an-agent becomes
-      a branch. `subworkflow`/`while`-with-agent/nested-`for` deferred (0 corpus cases).
-- [ ] Codegen: emit `fanout` back to the exact `parallel([...])` it came from (byte-identical for own
-      output); per-branch promptExpr self-lint-exempt.
-- [ ] Validation CF621/622 (+ matrix parity, 27 rules) — empty fan-out, empty-prompt branch.
-- [ ] Canvas: render `fanout` as a titled concurrent/sequential container with one lane per branch
-      (map lane = `× source`, thunk lane = concrete); palette/fields/defaultData.
-- [ ] Corpus re-run: the 57 hidden agents surface as fan-out lanes; biorce renders multi-lane fan-outs;
-      0 self-lint errors; fixpoint holds; all M6–M9 fixtures still byte-identical; code-reviewer APPROVE.
+- [x] `fanout` node kind (mode parallel|promiseAll + `FanoutBranch[]` of thunk/map lanes) — models
+      `parallel([ …thunks / …map spreads ])` AND `Promise.all([...])`, the static-array forms the
+      single-source `parallel` kind can't express (18 corpus calls hiding 57 concurrent agents,
+      previously raw); destructuring LHS preserved via `bindingPattern`/`bindingPatternNames`.
+- [x] Parser: `tryFanoutCall` types `parallel([...])`/`Promise.all([...])` (literal thunks +
+      `...SRC.map()` spreads + merged arrays); any un-typeable element → whole call stays raw.
+      `subworkflow`/`while`-with-agent/nested-`for`/callback-nested-`if` deferred (0 / rare corpus cases).
+- [x] Codegen: emit `fanout` back to the exact `parallel([...])`/`Promise.all([...])` (byte-identical
+      for own output); per-branch promptExpr self-lint-exempt; destructured names join rawBindings.
+- [x] Validation CF621/622 + CF605 structured-ref + CF607 fanout (matrix parity, 27 rules).
+- [x] Canvas: `fanout` renders as a concurrent container with one lane per branch (map lane =
+      `× source`, thunk lane = its label); palette/fields (mode + editable branches JSON)/defaultData.
+- [x] Corpus re-run: 57 hidden agents surfaced (fanout 0→15 nodes / 46 lanes); biorce renders 4/5/2-lane
+      fan-outs; 0 self-lint errors; fixpoint holds; all M6–M9 fixtures still byte-identical; APPROVE.
 
 ## M5 — Sharing & polish
 - [ ] Plugin-bundle export target.
