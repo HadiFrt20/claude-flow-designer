@@ -111,6 +111,25 @@ describe('generate() pipeline', () => {
     expect(() => generate(graph)).toThrow(ExportGateError);
   });
 
+  it('ignoreWarnings gates on errors only (a warning does not block the preview)', () => {
+    // CF614: a parallel with no itemLabel is a WARNING. Default generate() blocks it;
+    // ignoreWarnings:true (the preview path) emits, while a real error still blocks.
+    const warnGraph = g(
+      [n.meta('meta', { name: 't', description: 'd' }),
+       n.parallel('p', { source: 'args', itemVar: 'x', itemPrompt: 'do {{x}}' }),
+       n.ret('ret', { source: 'p', transform: 'none' })],
+      [e('meta', 'p'), e('p', 'ret')],
+    );
+    expect(() => generate(warnGraph)).toThrow(ExportGateError); // CF614 blocks by default
+    expect(() => generate(warnGraph, { ignoreWarnings: true })).not.toThrow(); // preview renders
+    // an ERROR still blocks even with ignoreWarnings.
+    const errGraph = g(
+      [n.agent('a', { prompt: 'x' }), n.ret('ret', { source: 'a', transform: 'none' })],
+      [e('a', 'ret')],
+    );
+    expect(() => generate(errGraph, { ignoreWarnings: true })).toThrow(ExportGateError);
+  });
+
   it('emits deterministically (byte-identical across runs)', () => {
     const a = generate(TEMPLATES[0]!.graph);
     const b = generate(TEMPLATES[0]!.graph);

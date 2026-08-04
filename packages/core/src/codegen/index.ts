@@ -21,6 +21,14 @@ export class ExportGateError extends Error {
 export interface GenerateOptions {
   /** Include the round-trippable graph sidecar (<slug>.clauflow.json). Default true. */
   includeGraphFile?: boolean;
+  /**
+   * Gate on ERRORS only, ignoring unacknowledged warnings. Default false (the export/
+   * write path: warnings block until acked). The live PREVIEW passes true — a readability
+   * warning (e.g. CF614 missing itemLabel) should never hide the read-only generated
+   * output, especially for an imported workflow the user is just visualizing. Errors
+   * still block (they'd emit invalid JS); self-lint still runs.
+   */
+  ignoreWarnings?: boolean;
 }
 
 function sortFiles(files: GeneratedFile[]): GeneratedFile[] {
@@ -32,12 +40,15 @@ function sortFiles(files: GeneratedFile[]): GeneratedFile[] {
  * blocks, or SelfLintError if an emitted artifact is malformed (a codegen bug).
  */
 export function generate(graph: WorkflowGraph, opts: GenerateOptions = {}): GeneratedFile[] {
-  const { includeGraphFile = true } = opts;
+  const { includeGraphFile = true, ignoreWarnings = false } = opts;
 
-  // 1. validate + 2. export gate
+  // 1. validate + 2. export gate. The preview (ignoreWarnings) gates on errors only;
+  // the export/write path treats unacked warnings as blocking (acked in the dialog).
   const diags = validateGraph(graph);
   const acked = graph.meta.ackedWarnings ?? [];
-  const gate = exportGate(diags, acked);
+  const gate = ignoreWarnings
+    ? exportGate(diags.filter((d) => d.severity === 'error'), acked)
+    : exportGate(diags, acked);
   if (!gate.ok) throw new ExportGateError(gate.blocking);
 
   // 3. emit — the workflow script (with exact raw byte spans) + round-trip sidecar.

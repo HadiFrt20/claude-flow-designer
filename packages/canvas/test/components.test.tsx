@@ -149,11 +149,31 @@ describe('PreviewPane', () => {
     if (!r.ok) expect(r.blocking.map((d) => d.ruleId)).toContain('CF001');
   });
 
-  it('renders the blocked state instead of stale output', () => {
+  it('renders the error-blocked state instead of stale output', () => {
     const store = new EditorStore();
-    store.addNode(agent('a'));
+    store.addNode(agent('a')); // no meta → CF001 (error) blocks
     render(<PreviewPane store={store} debounceMs={0} />);
-    expect(screen.getByText(/Export is blocked/)).toBeInTheDocument();
+    expect(screen.getByText(/must be fixed before the workflow can be generated/)).toBeInTheDocument();
+  });
+
+  it('previewOf still generates when only WARNINGS are present, and surfaces them', () => {
+    // A parallel with no itemLabel → CF614 (warning). Preview must render, not block.
+    const store = new EditorStore();
+    store.replaceGraph({
+      version: 1, meta: { name: 'w', slug: 'w' }, settings: {},
+      nodes: [
+        { id: 'm', kind: 'workflow.meta', label: 'w', position: { x: 0, y: 0 }, data: { name: 'w', description: 'd' } },
+        { id: 'p', kind: 'parallel', label: 'p', position: { x: 0, y: 0 }, data: { source: 'args', itemVar: 'x', itemPrompt: 'do {{x}}' } },
+        { id: 'r', kind: 'output.return', label: 'r', position: { x: 0, y: 0 }, data: { source: 'p', transform: 'none' } },
+      ],
+      edges: [{ id: 'e1', source: 'm', target: 'p' }, { id: 'e2', source: 'p', target: 'r' }],
+    });
+    const r = previewOf(store);
+    expect(r.ok).toBe(true); // NOT blocked by the CF614 warning
+    if (r.ok) {
+      expect(r.files.some((f) => f.path.endsWith('.js'))).toBe(true);
+      expect(r.warnings.map((d) => d.ruleId)).toContain('CF614'); // surfaced as a non-blocking note
+    }
   });
 });
 

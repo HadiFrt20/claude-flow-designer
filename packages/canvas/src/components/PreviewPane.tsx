@@ -9,20 +9,23 @@ import { generate, ExportGateError } from '@clauflow/core';
 import type { GeneratedFile } from '@clauflow/core';
 import { TOKENS, SPACE, SEVERITY_COLOR, SEVERITY_ICON } from '../tokens.js';
 
+type Diags = ReturnType<EditorStore['diagnostics']>;
 type PreviewResult =
-  | { ok: true; files: GeneratedFile[] }
-  | { ok: false; blocking: ReturnType<EditorStore['diagnostics']> }
+  | { ok: true; files: GeneratedFile[]; warnings: Diags }
+  | { ok: false; blocking: Diags }
   | { ok: false; error: string };
 
 /**
- * Pure helper (tested directly): generate, or return the blocking diagnostics,
- * or — for any other emitter error (e.g. a SelfLintError on an intermediate
- * graph) — the message. Never throws, so a mid-edit graph can't crash the
- * Designer tree.
+ * Pure helper (tested directly): generate the PREVIEW. Gates on ERRORS only
+ * (`ignoreWarnings`) — a readability warning like CF614 must never hide the read-only
+ * output, so warnings are returned alongside the files as non-blocking notes. Only a
+ * real error blocks. Never throws, so a mid-edit graph can't crash the Designer tree.
  */
 export function previewOf(store: EditorStore): PreviewResult {
   try {
-    return { ok: true, files: generate(store.current) };
+    const files = generate(store.current, { ignoreWarnings: true });
+    const warnings = store.diagnostics().filter((d) => d.severity === 'warn');
+    return { ok: true, files, warnings };
   } catch (err) {
     if (err instanceof ExportGateError) return { ok: false, blocking: err.blocking };
     return { ok: false, error: (err as Error).message };
@@ -55,7 +58,8 @@ export function PreviewPane({ store, debounceMs = 150 }: { store: EditorStore; d
       ) : !result.ok ? (
         <div style={{ padding: SPACE(3) }}>
           <p style={{ fontFamily: TOKENS.uiFont, color: TOKENS.textMuted }}>
-            Export is blocked — fix these to preview generated files:
+            {/* Only ERRORS reach here now — warnings no longer block the preview. */}
+            {result.blocking.length} error{result.blocking.length === 1 ? '' : 's'} must be fixed before the workflow can be generated:
           </p>
           <ul role="list" style={{ listStyle: 'none', padding: 0, margin: 0 }}>
             {result.blocking.map((d, i) => (
@@ -70,6 +74,16 @@ export function PreviewPane({ store, debounceMs = 150 }: { store: EditorStore; d
         <p style={{ padding: SPACE(3), fontFamily: TOKENS.uiFont, color: TOKENS.textMuted }}>Add a trigger and steps to see generated files.</p>
       ) : (
         <>
+          {result.warnings.length > 0 && (
+            <div role="note" aria-label="Non-blocking warnings" style={{ borderBottom: `1px solid ${TOKENS.border}`, padding: `${SPACE(1)} ${SPACE(2)}`, background: TOKENS.surfaceRaised }}>
+              <span style={{ fontFamily: TOKENS.uiFont, fontSize: '0.78em', color: SEVERITY_COLOR.warn }}>
+                <span aria-hidden>{SEVERITY_ICON.warn}</span> {result.warnings.length} warning{result.warnings.length === 1 ? '' : 's'} (non-blocking):
+              </span>{' '}
+              <span style={{ fontFamily: TOKENS.uiFont, fontSize: '0.78em', color: TOKENS.textMuted }}>
+                {result.warnings.map((d) => `${d.message} (${d.ruleId})`).join(' · ')}
+              </span>
+            </div>
+          )}
           <div role="tablist" aria-label="Generated files" style={{ display: 'flex', flexWrap: 'wrap', borderBottom: `1px solid ${TOKENS.border}` }}>
             {files.map((f) => (
               <button
