@@ -27,6 +27,29 @@ interface NodeData extends Record<string, unknown> {
   height?: number;
 }
 
+// Every node carries BOTH a horizontal (left/right) and a vertical (top/bottom) pair
+// of handles, with stable ids, so an edge can enter/exit whichever side keeps the
+// line straight (chosen per-edge from geometry in rfEdges). Ids: in-l/in-t (target),
+// out-r/out-b (source).
+const HID = { inL: 'in-l', inT: 'in-t', outR: 'out-r', outB: 'out-b' } as const;
+
+function TargetHandles({ dotStyle }: { dotStyle: React.CSSProperties }) {
+  return (
+    <>
+      <Handle id={HID.inL} type="target" position={Position.Left} style={dotStyle} />
+      <Handle id={HID.inT} type="target" position={Position.Top} style={dotStyle} />
+    </>
+  );
+}
+function SourceHandles({ dotStyle }: { dotStyle: React.CSSProperties }) {
+  return (
+    <>
+      <Handle id={HID.outR} type="source" position={Position.Right} style={dotStyle} />
+      <Handle id={HID.outB} type="source" position={Position.Bottom} style={dotStyle} />
+    </>
+  );
+}
+
 function CFNode({ data }: { data: NodeData }) {
   const { node, worst } = data;
   const cat = categoryOf(node.kind);
@@ -43,7 +66,7 @@ function CFNode({ data }: { data: NodeData }) {
         fontFamily: TOKENS.uiFont, padding: SPACE(2), position: 'relative',
       }}
     >
-      {hasTarget && <Handle type="target" position={Position.Left} style={dotStyle} />}
+      {hasTarget && <TargetHandles dotStyle={dotStyle} />}
       {worst && (
         <span
           aria-label={worst === 'error' ? 'has errors' : 'has warnings'}
@@ -56,7 +79,7 @@ function CFNode({ data }: { data: NodeData }) {
         <span aria-hidden>{CATEGORY_GLYPH[cat]}</span> {node.kind}
       </div>
       <div style={{ fontWeight: 600 }}>{node.label || '(unnamed)'}</div>
-      {hasSource && <Handle type="source" position={Position.Right} style={dotStyle} />}
+      {hasSource && <SourceHandles dotStyle={dotStyle} />}
     </div>
   );
 }
@@ -97,7 +120,7 @@ function FanOutNode({ data }: { data: NodeData }) {
         fontFamily: TOKENS.uiFont, padding: SPACE(2), position: 'relative',
       }}
     >
-      <Handle type="target" position={Position.Left} style={dotStyle} />
+      <TargetHandles dotStyle={dotStyle} />
       {worst && (
         <span
           aria-label={worst === 'error' ? 'has errors' : 'has warnings'}
@@ -129,7 +152,7 @@ function FanOutNode({ data }: { data: NodeData }) {
           </g>
         ))}
       </svg>
-      <Handle type="source" position={Position.Right} style={dotStyle} />
+      <SourceHandles dotStyle={dotStyle} />
     </div>
   );
 }
@@ -166,7 +189,7 @@ function FanoutNode({ data }: { data: NodeData }) {
         fontFamily: TOKENS.uiFont, padding: SPACE(2), position: 'relative',
       }}
     >
-      <Handle type="target" position={Position.Left} style={dotStyle} />
+      <TargetHandles dotStyle={dotStyle} />
       {worst && (
         <span
           aria-label={worst === 'error' ? 'has errors' : 'has warnings'}
@@ -204,7 +227,7 @@ function FanoutNode({ data }: { data: NodeData }) {
           +{branches.length - shown.length} more lanes
         </div>
       )}
-      <Handle type="source" position={Position.Right} style={dotStyle} />
+      <SourceHandles dotStyle={dotStyle} />
     </div>
   );
 }
@@ -224,14 +247,14 @@ function PhaseGroupNode({ data }: { data: NodeData }) {
         fontFamily: TOKENS.uiFont, position: 'relative',
       }}
     >
-      <Handle type="target" position={Position.Left} style={{ width: 8, height: 8, background: accent, border: 'none' }} />
+      <TargetHandles dotStyle={{ width: 8, height: 8, background: accent, border: 'none' }} />
       <div style={{ position: 'absolute', top: SPACE(1), left: SPACE(2), fontSize: '0.72em', color: accent, fontFamily: TOKENS.monoFont }}>
         <span aria-hidden>{CATEGORY_GLYPH.phase}</span> phase
       </div>
       <div style={{ position: 'absolute', top: SPACE(1), left: 0, right: 0, textAlign: 'center', fontWeight: 600, color: TOKENS.text }}>
         {node.kind === 'phase' ? node.data.title || '(untitled phase)' : ''}
       </div>
-      <Handle type="source" position={Position.Right} style={{ width: 8, height: 8, background: accent, border: 'none' }} />
+      <SourceHandles dotStyle={{ width: 8, height: 8, background: accent, border: 'none' }} />
     </div>
   );
 }
@@ -322,10 +345,24 @@ export function FlowCanvas({ store }: { store: EditorStore }) {
     return out;
   }, [state.graph.nodes, state.selectedNodeId, worstByNode, boxes]);
 
-  const rfEdges: RFEdge[] = useMemo(
-    () => state.graph.edges.map((e) => ({ id: e.id, source: e.source, target: e.target, label: e.label })),
-    [state.graph.edges],
-  );
+  const rfEdges: RFEdge[] = useMemo(() => {
+    const posOf = new Map(state.graph.nodes.map((n) => [n.id, n.position]));
+    return state.graph.edges.map((e) => {
+      const s = posOf.get(e.source);
+      const t = posOf.get(e.target);
+      // Pick the handle pair that keeps the line straightest: if the target sits
+      // mostly BELOW the source (a stacked phase member), exit the bottom and enter
+      // the top; otherwise flow horizontally (left→right). This + smoothstep routing
+      // replaces the looping bezier spaghetti with clean orthogonal lines.
+      const vertical = s && t && (t.y - s.y) > Math.abs(t.x - s.x);
+      return {
+        id: e.id, source: e.source, target: e.target, label: e.label,
+        type: 'smoothstep',
+        sourceHandle: vertical ? HID.outB : HID.outR,
+        targetHandle: vertical ? HID.inT : HID.inL,
+      };
+    });
+  }, [state.graph.edges, state.graph.nodes]);
 
   const byId = useMemo(() => new Map(state.graph.nodes.map((n) => [n.id, n])), [state.graph.nodes]);
 
